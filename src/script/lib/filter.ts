@@ -1,6 +1,16 @@
 import Word from './word';
 import Config from './config';
 
+
+interface matchData {
+  groups: string[];
+  match: string;
+  offset: number;
+  originalMatch: string; // Workaround for unicode word boundaries
+  string: string;
+  unicode: boolean;
+}
+
 export class Filter {
   cfg: Config;
   counter: number;
@@ -82,6 +92,27 @@ export class Filter {
     });
   }
 
+  // matchResult
+  matchData(data: any[], unicode: boolean = false) {
+    let groups = data.slice(1, -2);
+    return {
+      groups: groups,
+      match: (unicode && groups.length) > 1 ? groups[1] : data[0], // Workaround for unicode word boundaries
+      offset: data[data.length-2],
+      originalMatch: data[0], // Workaround for unicode word boundaries
+      string: data[data.length-1],
+      unicode: unicode,
+    } as matchData;
+  }
+
+  whitelistedMatch(matchResult, whiteList): string {
+    // if (whiteList.some(w => matchResult.string.toLowerCase().slice(offset).startsWith(w))) {
+    if (whiteList.some(w => matchResult.string.toLowerCase().slice(matchResult.offset).startsWith(w))) {
+      return matchResult.unicode ? matchResult.originalMatch : matchResult.match; // Workaround for unicode word boundaries
+    };
+    return '';
+  }
+
   // Config Dependencies: filterMethod, wordList,
   // censorFixedLength, preserveFirst, preserveLast, censorCharacter
   // words, defaultSubstitution, preserveCase
@@ -91,23 +122,32 @@ export class Filter {
     switch(self.cfg.filterMethod) {
       case 0: // Censor
         self.wordRegExps.forEach((regExp, index) => {
-          str = str.replace(regExp, function(match, arg1, arg2, arg3, arg4, arg5): string {
+          // str = str.replace(regExp, function(match, arg1, arg2, arg3, arg4, arg5): string {
+          str = str.replace(regExp, function(...args): string {
+            let data = self.matchData(args, regExp.unicode);
+
+            // Return original string if whitelisted
+            if (true) { // Check if whitelist is enabled
+              // let whiteList = [/^good\b/gi];
+              let whitelisted = self.whitelistedMatch(data, self.cfg.wordWhitelist);
+              if (whitelisted) { return whitelisted; }
+            }
+
             if (stats) { self.foundMatch(self.wordList[index]); }
-            if (regExp.unicode) { match = arg2; } // Workaround for unicode word boundaries
             let censoredString = '';
-            let censorLength = self.cfg.censorFixedLength > 0 ? self.cfg.censorFixedLength : match.length;
+            let censorLength = self.cfg.censorFixedLength > 0 ? self.cfg.censorFixedLength : data.match.length;
 
             if (self.cfg.preserveFirst && self.cfg.preserveLast) {
-              censoredString = match[0] + self.cfg.censorCharacter.repeat(censorLength - 2) + match.slice(-1);
+              censoredString = data.match[0] + self.cfg.censorCharacter.repeat(censorLength - 2) + data.match.slice(-1);
             } else if (self.cfg.preserveFirst) {
-              censoredString = match[0] + self.cfg.censorCharacter.repeat(censorLength - 1);
+              censoredString = data.match[0] + self.cfg.censorCharacter.repeat(censorLength - 1);
             } else if (self.cfg.preserveLast) {
-              censoredString = self.cfg.censorCharacter.repeat(censorLength - 1) + match.slice(-1);
+              censoredString = self.cfg.censorCharacter.repeat(censorLength - 1) + data.match.slice(-1);
             } else {
               censoredString = self.cfg.censorCharacter.repeat(censorLength);
             }
 
-            if (regExp.unicode) { censoredString = arg1 + censoredString + arg3; } // Workaround for unicode word boundaries
+            if (data.unicode) { censoredString = data.groups[0] + censoredString + data.groups[2]; } // Workaround for unicode word boundaries
             // console.log('Censor match:', match, censoredString); // DEBUG
             return censoredString;
           });
@@ -116,6 +156,7 @@ export class Filter {
       case 1: // Substitute
         self.wordRegExps.forEach((regExp, index) => {
           str = str.replace(regExp, function(match, arg1, arg2, arg3, arg4, arg5): string {
+            // TODO: if (self.whitelistedWord(match)) { return match; }
             if (stats) { self.foundMatch(self.wordList[index]); }
             if (regExp.unicode) { match = arg2; } // Workaround for unicode word boundaries
             let sub = self.cfg.words[self.wordList[index]].sub || self.cfg.defaultSubstitution;
@@ -143,6 +184,7 @@ export class Filter {
         self.wordRegExps.forEach((regExp, index) => {
           str = str.replace(regExp, function(match, arg1, arg2, arg3, arg4, arg5): string {
             // console.log('\nmatch: ', match, '\narg1: ', arg1, '\narg2: ', arg2, '\narg3: ', arg3, '\narg4: ', arg4, '\narg5: ', arg5); // DEBUG
+            // if (self.whitelistedWord(match)) { return match; }
             if (stats) { self.foundMatch(self.wordList[index]); }
             if (regExp.unicode) {
               // Workaround for unicode word boundaries
@@ -168,6 +210,10 @@ export class Filter {
     }
 
     return str;
+  }
+
+  whitelistedWord(match: string): boolean {
+    return this.cfg.wordWhitelist.includes(match.toLowerCase());
   }
 
   init() {

@@ -112,11 +112,19 @@ describe('Filter', function() {
 
       it('Should filter a partial word ending with punctuation', function() {
         let filter = new Filter;
-        debugger;
         filter.cfg = new Config({ words: {'this!': { matchMethod: 1 }}, filterMethod: 0, censorCharacter: '_', globalMatchMethod: 3 });
         filter.init();
         expect(filter.replaceText('I love allthis! Do you?')).to.equal('I love all_____ Do you?');
         expect(filter.replaceText('I love this! Do you?')).to.equal('I love _____ Do you?');
+      });
+
+      it.only('Should not filter a whitelisted word with partial match', function() {
+        let filter = new Filter;
+        filter.cfg = new Config({ words: {'god': { matchMethod: 1, repeat: true }}, filterMethod: 0, censorCharacter: '_', globalMatchMethod: 3, wordWhitelist: ['good', 'goodness'] });
+        filter.init();
+        expect(filter.replaceText('All the good goody goodness.')).to.equal('All the good ____y goodness.');
+        expect(filter.replaceText('God is good. God is great!')).to.equal('Gosh is good. Gosh is great!');
+        // expect(filter.replaceText('I love this! Do you?')).to.equal('I love _____ Do you?');
       });
 
       it('Should filter a whole word with (_) characters and fixed length (3) and not update stats', function() {
@@ -130,7 +138,6 @@ describe('Filter', function() {
 
       it('Should filter a whole word ending with punctuation', function() {
         let filter = new Filter;
-        debugger;
         filter.cfg = new Config({ words: {'this!': { matchMethod: 2 }}, filterMethod: 0, censorCharacter: '_', globalMatchMethod: 3 });
         filter.init();
         expect(filter.replaceText('I love allthis! Do you?')).to.equal('I love ________ Do you?');
@@ -175,7 +182,7 @@ describe('Filter', function() {
           filter.cfg = new Config({ words: Object.assign({}, testWords), filterMethod: 0, globalMatchMethod: 3, censorCharacter: '*', censorFixedLength: 0, preserveFirst: false, preserveLast: false });
           filter.cfg.words['словен'] = { matchMethod: 2, repeat: false };
           filter.init();
-          debugger;
+
           expect(filter.replaceText('За пределами Словении этнические словенцы компактно')).to.equal('За пределами ******** этнические ******** компактно');
         });
       });
