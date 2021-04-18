@@ -1,6 +1,6 @@
 {
   "name": "advancedprofanityfilter",
-  "version": "2.5.1",
+  "version": "2.18.0",
   "description": "A browser extension to filter profanity from webpages.",
   "main": "filter.js",
   "repository": {
@@ -28,42 +28,45 @@
     "package:extension": "node bin/package-extension.js",
     "package:webpack": "webpack --config bin/webpack.config.js",
     "package": "npm run build && npm run package:bookmarklet && npm run package:extension",
-    "test:cov": "nyc --reporter=lcov --reporter=text node_modules/mocha/bin/_mocha",
+    "test:addon": "npx addons-linter ./extension-firefox.zip",
+    "test:all": "npm run test && npm run test:lint:tests && npm run test:addon",
+    "test:cov": "npm run build:test && nyc --reporter=lcov --reporter=text node_modules/mocha/bin/_mocha",
     "test:debug": "node --inspect-brk node_modules/mocha/bin/_mocha --reporter tap",
-    "test:lint": "eslint src/**/*.ts",
+    "test:lint": "eslint \"src/**/*.ts\"",
+    "test:lint:tests": "eslint \"test/**/*.spec.js\"",
     "test:nocov": "node_modules/mocha/bin/_mocha",
     "test:types": "tsc --noEmit",
-    "test": "npm run test:lint && npm run build:test && npm run test:types && npm run test:cov",
+    "test": "npm run test:lint && npm run test:types && npm run test:cov",
     "type-check:watch": "npm run type-check -- --watch",
     "update:help": "node bin/update-help.js",
     "watch": "node bin/watch.js"
   },
   "devDependencies": {
-    "@babel/cli": "^7.4.4",
-    "@babel/core": "^7.4.5",
-    "@babel/plugin-proposal-class-properties": "^7.4.4",
-    "@babel/plugin-proposal-object-rest-spread": "^7.4.4",
-    "@babel/polyfill": "^7.4.4",
-    "@babel/preset-env": "^7.4.5",
-    "@babel/preset-typescript": "^7.3.3",
-    "@babel/register": "^7.4.4",
-    "@types/chrome": "^0.0.86",
-    "@typescript-eslint/eslint-plugin": "^1.9.0",
-    "@typescript-eslint/parser": "^1.9.0",
+    "@babel/cli": "^7.12.10",
+    "@babel/core": "^7.12.10",
+    "@babel/plugin-proposal-class-properties": "^7.12.1",
+    "@babel/plugin-proposal-object-rest-spread": "^7.12.1",
+    "@babel/polyfill": "^7.12.1",
+    "@babel/preset-env": "^7.12.11",
+    "@babel/preset-typescript": "^7.12.7",
+    "@babel/register": "^7.12.10",
+    "@types/chrome": "^0.0.128",
+    "@typescript-eslint/eslint-plugin": "^4.14.0",
+    "@typescript-eslint/parser": "^4.14.0",
+    "addons-linter": "^1.26.0",
     "adm-zip": "git+https://github.com/cthackers/adm-zip.git",
-    "babel-loader": "^8.0.6",
+    "babel-loader": "^8.2.2",
     "chai": "^4.2.0",
-    "chokidar": "^3.0.0",
+    "chokidar": "^3.5.1",
     "download": "^7.1.0",
-    "eslint": "^5.16.0",
-    "fs-extra": "^8.0.1",
+    "eslint": "^7.18.0",
+    "fs-extra": "^8.1.0",
     "marked": "^0.7.0",
-    "mocha": "^6.1.4",
+    "mocha": "^7.2.0",
     "nyc": "^14.1.1",
-    "terser-webpack-plugin": "^1.3.0",
-    "typescript": "^3.4.5",
-    "webpack": "^4.32.2",
-    "webpack-cli": "^3.3.2"
+    "typescript": ">=4.1.3",
+    "webpack": "^5.20.2",
+    "webpack-cli": "^3.3.12"
   },
   "babel": {
     "presets": [
@@ -98,11 +101,28 @@
       "@typescript-eslint"
     ],
     "rules": {
-      "indent": "off",
+      "array-bracket-spacing": [
+        "warn",
+        "never"
+      ],
+      "arrow-parens": [
+        "warn",
+        "always"
+      ],
+      "comma-spacing": "warn",
+      "indent": [
+        "warn",
+        2,
+        {
+          "SwitchCase": 1
+        }
+      ],
       "no-console": "warn",
       "no-control-regex": [
         "off"
       ],
+      "no-prototype-builtins": "off",
+      "no-shadow": "warn",
       "no-undef": [
         "off"
       ],
@@ -112,20 +132,38 @@
       "no-useless-escape": [
         "off"
       ],
+      "object-curly-spacing": [
+        "warn",
+        "always"
+      ],
+      "prefer-const": [
+        "error",
+        {
+          "destructuring": "all"
+        }
+      ],
       "quotes": [
         "error",
-        "single"
+        "single",
+        "avoid-escape"
       ],
       "semi": [
         "error",
         "always"
       ],
-      "@typescript-eslint/class-name-casing": "error",
-      "@typescript-eslint/explicit-function-return-type": "off",
-      "@typescript-eslint/indent": [
-        "error",
-        2
+      "@typescript-eslint/ban-ts-comment": [
+        "warn",
+        {
+          "ts-ignore": "allow-with-description"
+        }
       ],
+      "@typescript-eslint/explicit-function-return-type": "off",
+      "@typescript-eslint/explicit-member-accessibility": "off",
+      "@typescript-eslint/explicit-module-boundary-types": "off",
+      "@typescript-eslint/naming-convention": "off",
+      "@typescript-eslint/no-empty-function": "off",
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-inferrable-types": "off",
       "@typescript-eslint/no-unused-vars": [
         "error",
         {
@@ -134,10 +172,17 @@
         }
       ],
       "@typescript-eslint/no-use-before-define": "off",
-      "@typescript-eslint/explicit-member-accessibility": "off",
-      "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/type-annotation-spacing": "error"
     }
+  },
+  "mocha": {
+    "reporter": "dot",
+    "require": [
+      "@babel/register"
+    ],
+    "spec": [
+      "test/**/*.spec.js"
+    ]
   },
   "nyc": {
     "cwd": "test/",

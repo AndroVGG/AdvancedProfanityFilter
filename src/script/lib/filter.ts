@@ -1,127 +1,150 @@
+import Constants from './constants';
 import Word from './word';
+import Wordlist from './wordlist';
 import Config from './config';
 
-export class Filter {
+export default class Filter {
   cfg: Config;
   counter: number;
-  wordList: string[];
-  wordRegExps: RegExp[];
+  iWhitelist: string[];
+  whitelist: string[];
+  wordlistId: number;
+  wordlists: { [name: string]: Wordlist };
 
   constructor() {
     this.counter = 0;
-    this.wordList = [];
-    this.wordRegExps = [];
+    this.iWhitelist = [];
+    this.whitelist = [];
+    this.wordlists = {};
   }
 
-  foundMatch(word) {
+  buildWordlist(wordlistId: number | false, rebuild: boolean = false): number {
+    if (wordlistId === false) { wordlistId = this.wordlistId; }
+
+    // Generate a new wordlist if required
+    if (rebuild || !this.wordlists[wordlistId]) {
+      this.wordlists[wordlistId] = new Wordlist(this.cfg, wordlistId);
+    }
+
+    return wordlistId;
+  }
+
+  checkWhitelist(match: string, string: string, matchStartIndex: number, word: Word): boolean {
+    const whitelistLength = this.whitelist.length;
+    const iWhitelistLength = this.iWhitelist.length;
+
+    if (whitelistLength || iWhitelistLength) {
+      // Check for exact/whole match (match case)
+      if (whitelistLength && this.whitelist.includes(match)) { return true; }
+
+      // Check for exact/whole match (case insensitive)
+      if (iWhitelistLength && this.iWhitelist.includes(match.toLowerCase())) { return true; }
+
+      // Check for partial match (match may not contain the full whitelisted word)
+      if (word.matchMethod === Constants.MatchMethods.Partial) {
+        const wordOptions: WordOptions = {
+          matchMethod: Constants.MatchMethods.Whole,
+          repeat: false,
+          separators: false,
+          sub: ''
+        };
+        const wholeWordRegExp = new Word(match, wordOptions, this.cfg).regExp;
+
+        let result;
+        while ((result = wholeWordRegExp.exec(string)) !== null) {
+          const resultMatch = result.length == 4 ? result[2]: result[0];
+          const resultIndex = result.length == 4 ? result.index + result[1].length: result.index;
+          // Make sure this is the match we want to check
+          if (
+            resultIndex <= matchStartIndex
+            && (resultIndex + resultMatch.length) >= (matchStartIndex + match.length)
+          ) {
+            if (whitelistLength && this.whitelist.includes(resultMatch)) { return true; }
+            if (iWhitelistLength && this.iWhitelist.includes(resultMatch.toLowerCase())) { return true; }
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  foundMatch(word?: Word) {
     this.counter++;
   }
 
-  // Parse the profanity list
-  // ["exact", "partial", "whole", "disabled"]
-  generateRegexpList() {
-    let self = this;
-    self.wordRegExps = [];
-
-    // console.time('generateRegexpList'); // Benchmark - Call Time
-    // console.count('generateRegexpList: words to filter'); // Benchmarking - Executaion Count
-    if (self.cfg.filterMethod == 2) { // Special regexp for "Remove" filter, uses per-word matchMethods
-      self.wordList.forEach(word => {
-        let repeat = self.cfg.repeatForWord(word);
-
-        if (self.cfg.words[word].matchMethod == 0) { // If word matchMethod is exact
-          self.wordRegExps.push(Word.buildRegexpForRemoveExact(word, repeat));
-        } else if (self.cfg.words[word].matchMethod == 4) { // If word matchMethod is RegExp
-          self.wordRegExps.push(new RegExp(word, 'gi'));
-        } else {
-          self.wordRegExps.push(Word.buildRegexpForRemovePart(word, repeat));
-        }
-      });
-    } else {
-      switch(self.cfg.globalMatchMethod) {
-        case 0: // Global: Exact match
-          self.wordList.forEach(word => {
-            let repeat = self.cfg.repeatForWord(word);
-            self.wordRegExps.push(Word.buildExactRegexp(word, repeat));
-          });
-          break;
-        case 2: // Global: Whole word match
-          self.wordList.forEach(word => {
-            let repeat = self.cfg.repeatForWord(word);
-            self.wordRegExps.push(Word.buildWholeRegexp(word, repeat));
-          });
-          break;
-        case 3: // Per-word matching
-          self.wordList.forEach(word => {
-            let repeat = self.cfg.repeatForWord(word);
-            switch(self.cfg.words[word].matchMethod) {
-              case 0: self.wordRegExps.push(Word.buildExactRegexp(word, repeat)); break; // Exact match
-              case 2: self.wordRegExps.push(Word.buildWholeRegexp(word, repeat)); break; // Whole word match
-              case 4: self.wordRegExps.push(new RegExp(word, 'gi')); break; // Regular Expression (Advanced)
-              default: self.wordRegExps.push(Word.buildPartRegexp(word, repeat)); break; // case 1 - Partial word match (Default)
-            }
-          });
-          break;
-        default: // case 1 - Global: Partial word match (Default)
-          self.wordList.forEach(word => {
-            let repeat = self.cfg.repeatForWord(word);
-            self.wordRegExps.push(Word.buildPartRegexp(word, repeat));
-          });
-          break;
-      }
-    }
-    // console.timeEnd('generateRegexpList'); // Benchmark - Call Time
+  init(wordlistId: number | false = false) {
+    this.iWhitelist = this.cfg.iWordWhitelist;
+    this.whitelist = this.cfg.wordWhitelist;
+    if (this.wordlistId === undefined) { this.wordlistId = this.cfg.wordlistId == null ? 0 : this.cfg.wordlistId; }
+    this.buildWordlist(wordlistId);
   }
 
-  // Sort the words array by longest (most-specific) first
-  // Config Dependencies: words
-  generateWordList() {
-    this.wordList = null;
-    this.wordList = Object.keys(this.cfg.words).sort((a, b) => {
-      return b.length - a.length;
+  matchData(wordlist: Wordlist, index: number, match: string, args: any[]) {
+    const word = wordlist.find(index);
+    const string = args.pop();
+    const matchStartIndex = args.pop();
+    const captureGroups = args;
+
+    // (boundary)(match)(boundary): Used internally for several types of matches:
+    // - Remove Filter
+    // - Unicode word boundaries (workaround)
+    // - Edge punctuation
+    const internalCaptureGroups = (captureGroups.length > 0 && word.matchMethod !== Constants.MatchMethods.Regex);
+    if (internalCaptureGroups) { match = captureGroups[1]; }
+
+    return { word: word, string: string, match: match, matchStartIndex: matchStartIndex, captureGroups: captureGroups, internalCaptureGroups: internalCaptureGroups };
+  }
+
+  rebuildWordlists() {
+    Object.keys(this.wordlists).forEach((key) => {
+      this.buildWordlist(parseInt(key), true);
     });
   }
 
-  // Config Dependencies: filterMethod, wordList,
-  // censorFixedLength, preserveFirst, preserveLast, censorCharacter
-  // words, defaultSubstitution, preserveCase
-  replaceText(str: string, stats: boolean = true): string {
-    // console.count('replaceText'); // Benchmarking - Executaion Count
-    let self = this;
-    switch(self.cfg.filterMethod) {
-      case 0: // Censor
-        self.wordRegExps.forEach((regExp, index) => {
-          str = str.replace(regExp, function(match, arg1, arg2, arg3, arg4, arg5): string {
-            if (stats) { self.foundMatch(self.wordList[index]); }
-            if (regExp.unicode) { match = arg2; } // Workaround for unicode word boundaries
-            let censoredString = '';
-            let censorLength = self.cfg.censorFixedLength > 0 ? self.cfg.censorFixedLength : match.length;
+  replaceText(str: string, wordlistId: number | false = false, stats: boolean = true): string {
+    wordlistId = this.buildWordlist(wordlistId);
+    const wordlist = this.wordlists[wordlistId];
 
-            if (self.cfg.preserveFirst && self.cfg.preserveLast) {
-              censoredString = match[0] + self.cfg.censorCharacter.repeat(censorLength - 2) + match.slice(-1);
-            } else if (self.cfg.preserveFirst) {
-              censoredString = match[0] + self.cfg.censorCharacter.repeat(censorLength - 1);
-            } else if (self.cfg.preserveLast) {
-              censoredString = self.cfg.censorCharacter.repeat(censorLength - 1) + match.slice(-1);
+    switch(this.cfg.filterMethod) {
+      case Constants.FilterMethods.Censor:
+        wordlist.regExps.forEach((regExp, index) => {
+          str = str.replace(regExp, (originalMatch, ...args): string => {
+            const { word, string, match, matchStartIndex, captureGroups, internalCaptureGroups } = this.matchData(wordlist, index, originalMatch, args);
+            if (this.checkWhitelist(match, string, matchStartIndex, word)) { return match; } // Check for whitelisted match
+            if (stats) { this.foundMatch(word); }
+
+            // Filter
+            let censoredString = '';
+            const censorLength = this.cfg.censorFixedLength > 0 ? this.cfg.censorFixedLength : match.length;
+
+            if (this.cfg.preserveFirst && this.cfg.preserveLast) {
+              censoredString = match[0] + this.cfg.censorCharacter.repeat(censorLength - 2) + match.slice(-1);
+            } else if (this.cfg.preserveFirst) {
+              censoredString = match[0] + this.cfg.censorCharacter.repeat(censorLength - 1);
+            } else if (this.cfg.preserveLast) {
+              censoredString = this.cfg.censorCharacter.repeat(censorLength - 1) + match.slice(-1);
             } else {
-              censoredString = self.cfg.censorCharacter.repeat(censorLength);
+              censoredString = this.cfg.censorCharacter.repeat(censorLength);
             }
 
-            if (regExp.unicode) { censoredString = arg1 + censoredString + arg3; } // Workaround for unicode word boundaries
-            // console.log('Censor match:', match, censoredString); // DEBUG
+            if (internalCaptureGroups) { censoredString = captureGroups[0] + censoredString + captureGroups[2]; }
             return censoredString;
           });
         });
         break;
-      case 1: // Substitute
-        self.wordRegExps.forEach((regExp, index) => {
-          str = str.replace(regExp, function(match, arg1, arg2, arg3, arg4, arg5): string {
-            if (stats) { self.foundMatch(self.wordList[index]); }
-            if (regExp.unicode) { match = arg2; } // Workaround for unicode word boundaries
-            let sub = self.cfg.words[self.wordList[index]].sub || self.cfg.defaultSubstitution;
+      case Constants.FilterMethods.Substitute:
+        wordlist.regExps.forEach((regExp, index) => {
+          str = str.replace(regExp, (originalMatch, ...args): string => {
+            const { word, string, match, matchStartIndex, captureGroups, internalCaptureGroups } = this.matchData(wordlist, index, originalMatch, args);
+            if (this.checkWhitelist(match, string, matchStartIndex, word)) { return match; } // Check for whitelisted match
+            if (stats) { this.foundMatch(word); }
+
+            // Filter
+            let sub = word.sub || this.cfg.defaultSubstitution;
 
             // Make substitution match case of original match
-            if (self.cfg.preserveCase) {
+            if (this.cfg.preserveCase) {
               if (Word.allUpperCase(match)) {
                 sub = sub.toUpperCase();
               } else if (Word.capitalized(match)) {
@@ -129,27 +152,28 @@ export class Filter {
               }
             }
 
-            if (self.cfg.substitutionMark) {
+            if (this.cfg.substitutionMark) {
               sub = '[' + sub + ']';
             }
 
-            if (regExp.unicode) { sub = arg1 + sub + arg3; } // Workaround for unicode word boundaries
-            // console.log('Substitute match:', match, sub); // DEBUG
+            if (internalCaptureGroups) { sub = captureGroups[0] + sub + captureGroups[2]; }
             return sub;
           });
         });
         break;
-      case 2: // Remove
-        self.wordRegExps.forEach((regExp, index) => {
-          str = str.replace(regExp, function(match, arg1, arg2, arg3, arg4, arg5): string {
-            // console.log('\nmatch: ', match, '\narg1: ', arg1, '\narg2: ', arg2, '\narg3: ', arg3, '\narg4: ', arg4, '\narg5: ', arg5); // DEBUG
-            if (stats) { self.foundMatch(self.wordList[index]); }
-            if (regExp.unicode) {
-              // Workaround for unicode word boundaries
-              if (Word.whitespaceRegExp.test(arg1) && Word.whitespaceRegExp.test(arg3)) { // If both surrounds are whitespace (only need 1)
-                return arg1;
-              } else if (Word.nonWordRegExp.test(arg1) || Word.nonWordRegExp.test(arg3)) { // If there is more than just whitesapce (ex. ',')
-                return (arg1 + arg3).trim();
+      case Constants.FilterMethods.Remove:
+        wordlist.regExps.forEach((regExp, index) => {
+          str = str.replace(regExp, (originalMatch, ...args): string => {
+            const { word, string, match, matchStartIndex, captureGroups, internalCaptureGroups } = this.matchData(wordlist, index, originalMatch, args);
+            if (this.checkWhitelist(match.trim(), string, matchStartIndex, word)) { return match; } // Check for whitelisted match
+            if (stats) { this.foundMatch(word); }
+
+            // Filter
+            if (internalCaptureGroups) {
+              if (Word.whitespaceRegExp.test(captureGroups[0]) && Word.whitespaceRegExp.test(captureGroups[2])) { // If both surrounds are whitespace (only need 1)
+                return captureGroups[0];
+              } else if (Word.nonWordRegExp.test(captureGroups[0]) || Word.nonWordRegExp.test(captureGroups[2])) { // If there is more than just whitesapce (ex. ',')
+                return (captureGroups[0] + captureGroups[2]).trim();
               } else {
                 return '';
               }
@@ -158,7 +182,6 @@ export class Filter {
               if (Word.whitespaceRegExp.test(match[0]) && Word.whitespaceRegExp.test(match[match.length - 1])) {
                 return match[0];
               } else {
-                // console.log('Remove match:', match); // DEBUG
                 return '';
               }
             }
@@ -170,8 +193,13 @@ export class Filter {
     return str;
   }
 
-  init() {
-    this.generateWordList();
-    this.generateRegexpList();
+  replaceTextResult(str: string, wordlistId: (number | false) = false, stats: boolean = true): ReplaceTextResult {
+    const result: ReplaceTextResult = {
+      original: str,
+      filtered: this.replaceText(str, wordlistId, stats),
+      modified: false
+    };
+    result.modified = (result.filtered != str);
+    return result;
   }
 }

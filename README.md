@@ -1,8 +1,10 @@
 # Advanced Profanity Filter
-[![Build Status](https://img.shields.io/travis/com/richardfrost/AdvancedProfanityFilter/master.svg?style=flat-square)](https://travis-ci.com/richardfrost/AdvancedProfanityFilter)
-[![Chrome Web Store](https://img.shields.io/chrome-web-store/d/piajkpdbaniagacofgklljacgjhefjeh.svg?style=flat-square)](https://chrome.google.com/webstore/detail/advanced-profanity-filter/piajkpdbaniagacofgklljacgjhefjeh)
-[![Chrome Web Store](https://img.shields.io/chrome-web-store/stars/piajkpdbaniagacofgklljacgjhefjeh.svg?style=flat-square)](https://chrome.google.com/webstore/detail/advanced-profanity-filter/piajkpdbaniagacofgklljacgjhefjeh)
-[![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donate_SM.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=XFL36QJY752R6&source=url)
+[![Build Status](https://flat.badgen.net/travis/richardfrost/AdvancedProfanityFilter/master)](https://travis-ci.com/richardfrost/AdvancedProfanityFilter)
+[![Chrome Web Store](https://flat.badgen.net/chrome-web-store/users/piajkpdbaniagacofgklljacgjhefjeh?color=blue)](https://chrome.google.com/webstore/detail/advanced-profanity-filter/piajkpdbaniagacofgklljacgjhefjeh)
+[![Chrome Web Store](https://flat.badgen.net/chrome-web-store/stars/piajkpdbaniagacofgklljacgjhefjeh?color=blue)](https://chrome.google.com/webstore/detail/advanced-profanity-filter/piajkpdbaniagacofgklljacgjhefjeh)
+[![Discord](https://flat.badgen.net/badge/icon/discord?icon=discord&label)](https://discord.gg/MpE5Z3f)
+[![paypal](https://flat.badgen.net/badge/paypal/donate/FFC439)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=XFL36QJY752R6&source=url)
+[![Patreon](https://flat.badgen.net/badge/icon/patreon/F96854?icon=patreon&label)](https://www.patreon.com/richardfrost)
 
 A browser extension to filter profanity from webpages.
 
@@ -12,9 +14,13 @@ For an overview of features and options, please head to the [wiki](https://githu
 | Browser | Download |
 |---------|----------|
 | Chrome  | [Chrome Web Store](https://chrome.google.com/webstore/detail/advanced-profanity-filter/piajkpdbaniagacofgklljacgjhefjeh) |
-| Firefox | [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/advanced_profanity_filter)|
-| Opera   | [Opera addons](https://addons.opera.com/en/extensions/details/advanced-profanity-filter/)
-| Edge    | [More Info](https://github.com/richardfrost/AdvancedProfanityFilter/issues/102) |
+| Firefox | [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/advanced_profanity_filter) |
+| Edge    | [Microsoft Edge Addons](https://microsoftedge.microsoft.com/addons/detail/lhnbdlbhcokmgpjenkjolnhdnkphnkam) |
+| Edge (Legacy) | [More Info](https://github.com/richardfrost/AdvancedProfanityFilter/issues/102) |
+| Opera   | [Opera addons](https://addons.opera.com/en/extensions/details/advanced-profanity-filter/) |
+| Android | [Kiwi](https://play.google.com/store/apps/details?id=com.kiwibrowser.browser) or [Firefox](https://github.com/richardfrost/AdvancedProfanityFilter/issues/243#issuecomment-726218625) |
+| iOS/Other | [Bookmarklet Info](https://github.com/richardfrost/AdvancedProfanityFilter/wiki/Bookmarklet) |
+| TV Cast | [Instructions](https://github.com/richardfrost/AdvancedProfanityFilter/wiki/Audio#watch-on-tv) - [Discussion](https://github.com/richardfrost/AdvancedProfanityFilter/issues/206) |
 
 ### Features
 * Filter modes
@@ -27,14 +33,14 @@ For an overview of features and options, please head to the [wiki](https://githu
     * Pinterest
     * Reddit
     * Twitter
-* Audio muting for videos on supported sites:
+* [Audio muting](https://github.com/richardfrost/AdvancedProfanityFilter/wiki/Audio) for videos on supported sites:
     * Amazon Video
     * Hulu
     * Netflix
     * Plex
     * Vudu
     * YouTube
-    * And more! You can even add your own! (advanced)
+    * And more! You can even add your own! ([advanced](https://github.com/richardfrost/AdvancedProfanityFilter/wiki/Custom-Audio-Muting-Site))
 
 For a detailed overview of the features and settings, please see the [Getting Started page](https://github.com/richardfrost/AdvancedProfanityFilter/wiki).
 

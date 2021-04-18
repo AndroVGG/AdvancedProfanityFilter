@@ -1,141 +1,124 @@
+import Constants from './constants';
+
 export default class Config {
-  advancedDomains: string[];
   censorCharacter: string;
   censorFixedLength: number;
-  customAudioSites: { [site: string]: AudioRules[] };
   defaultSubstitution: string;
   defaultWordMatchMethod: number;
   defaultWordRepeat: boolean;
-  disabledDomains: string[];
-  enabledDomains: string[];
-  enabledDomainsOnly: boolean;
+  defaultWordSeparators: boolean;
   filterMethod: number;
   filterWordList: boolean;
-  globalMatchMethod: number;
-  muteAudio: boolean;
-  muteAudioOnly: boolean;
-  muteMethod: number;
-  muteCueRequireShowing: boolean;
-  password: string;
+  iWordWhitelist: string[];
   preserveCase: boolean;
   preserveFirst: boolean;
   preserveLast: boolean;
   showCounter: boolean;
-  showSubtitles: number;
   showSummary: boolean;
-  showUpdateNotification: boolean;
   substitutionMark: boolean;
-  words: { [key: string]: WordOptions; };
-  youTubeAutoSubsMin: number;
+  wordlistId: number;
+  wordlists: string[];
+  wordlistsEnabled: boolean;
+  words: { [key: string]: WordOptions };
+  wordWhitelist: string[];
 
-  static readonly filterMethods = {
-    censor: 0,
-    substitute: 1,
-    remove: 2
-  };
-
-  static readonly matchMethods = {
-    exact: 0,
-    partial: 1,
-    whole: 2,
-    'Per-Word': 3,
-    'RegExp': 4
-  };
+  static readonly _allWordlists = ['All words'];
 
   static readonly _defaults = {
-    advancedDomains: [],
     censorCharacter: '*',
     censorFixedLength: 0,
-    customAudioSites: null,
     defaultSubstitution: 'censored',
-    defaultWordMatchMethod: 0,
+    defaultWordMatchMethod: Constants.MatchMethods.Exact,
     defaultWordRepeat: false,
-    disabledDomains: [],
-    enabledDomains: [],
-    enabledDomainsOnly: false,
-    filterMethod: 1, // ['Censor', 'Substitute', 'Remove'];
+    defaultWordSeparators: false,
+    filterMethod: Constants.FilterMethods.Substitute,
     filterWordList: true,
-    globalMatchMethod: 3, // ['Exact', 'Partial', 'Whole', 'Per-Word', 'RegExp']
-    muteAudio: false, // Filter audio
-    muteAudioOnly: false,
-    muteMethod: 0, // 0: Mute Tab, 1: Video Volume
-    muteCueRequireShowing: true,
-    password: null,
+    iWordWhitelist: [],
     preserveCase: true,
     preserveFirst: true,
     preserveLast: false,
     showCounter: true,
-    showSubtitles: 0,
     showSummary: true,
-    showUpdateNotification: true,
     substitutionMark: false,
-    youTubeAutoSubsMin: 0
+    wordlistId: 0,
+    wordlists: ['Wordlist 1', 'Wordlist 2', 'Wordlist 3', 'Wordlist 4', 'Wordlist 5', 'Wordlist 6'],
+    wordlistsEnabled: true,
+    wordWhitelist: [],
   };
 
-  static readonly _defaultWords = {
-    'ass': { matchMethod: 0, repeat: true, sub: 'butt' },
-    'asses': { matchMethod: 0, repeat: false, sub: 'butts' },
-    'asshole': { matchMethod: 1, repeat: true, sub: 'jerk' },
-    'badass': { matchMethod: 1, repeat: true, sub: 'cool' },
-    'bastard': { matchMethod: 1, repeat: true, sub: 'idiot' },
-    'bitch': { matchMethod: 1, repeat: true, sub: 'bench' },
-    'cocksucker': { matchMethod: 1, repeat: true, sub: 'suckup' },
-    'cunt': { matchMethod: 1, repeat: true, sub: 'expletive' },
-    'dammit': { matchMethod: 1, repeat: false, sub: 'dangit' },
-    'damn': { matchMethod: 1, repeat: false, sub: 'dang' },
-    'dumbass': { matchMethod: 1, repeat: true, sub: 'idiot' },
-    'fag': { matchMethod: 0, repeat: true, sub: 'gay' },
-    'faggot': { matchMethod: 1, repeat: true, sub: 'gay' },
-    'fags': { matchMethod: 0, repeat: true, sub: 'gays' },
-    'fuck': { matchMethod: 1, repeat: true, sub: 'freak' },
-    'goddammit': { matchMethod: 1, repeat: true, sub: 'dangit' },
-    'hell': { matchMethod: 0, repeat: true, sub: 'heck' },
-    'jackass': { matchMethod: 1, repeat: true, sub: 'jerk' },
-    'nigga': { matchMethod: 0, repeat: true, sub: 'bruh' },
-    'nigger': { matchMethod: 0, repeat: true, sub: 'man' },
-    'niggers': { matchMethod: 0, repeat: true, sub: 'people' },
-    'piss': { matchMethod: 1, repeat: true, sub: 'pee' },
-    'pissed': { matchMethod: 1, repeat: true, sub: 'ticked' },
-    'pussies': { matchMethod: 0, repeat: true, sub: 'softies' },
-    'pussy': { matchMethod: 0, repeat: true, sub: 'softie' },
-    'shit': { matchMethod: 1, repeat: true, sub: 'crap' },
-    'slut': { matchMethod: 1, repeat: true, sub: 'tramp' },
-    'tits': { matchMethod: 1, repeat: true, sub: 'chest' },
-    'twat': { matchMethod: 0, repeat: true, sub: 'dumbo' },
-    'twats': { matchMethod: 0, repeat: true, sub: 'dumbos' },
-    'whore': { matchMethod: 1, repeat: true, sub: 'tramp' }
+  static readonly _defaultWords: { [key: string]: WordOptions } = {
+    'ass': { lists: [], matchMethod: Constants.MatchMethods.Exact, repeat: true, separators: false, sub: 'butt' },
+    'asses': { lists: [], matchMethod: Constants.MatchMethods.Exact, repeat: false, separators: false, sub: 'butts' },
+    'asshole': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: false, sub: 'jerk' },
+    'badass': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: true, sub: 'cool' },
+    'bastard': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: false, sub: 'idiot' },
+    'bitch': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: false, sub: 'bench' },
+    'cocksucker': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: true, sub: 'suckup' },
+    'cunt': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: false, sub: 'expletive' },
+    'dammit': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: false, separators: true, sub: 'dangit' },
+    'damn': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: false, separators: false, sub: 'dang' },
+    'dumbass': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: false, sub: 'idiot' },
+    'fag': { lists: [], matchMethod: Constants.MatchMethods.Exact, repeat: true, separators: false, sub: 'gay' },
+    'faggot': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: false, sub: 'gay' },
+    'fags': { lists: [], matchMethod: Constants.MatchMethods.Exact, repeat: true, separators: false, sub: 'gays' },
+    'fuck': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: true, sub: 'freak' },
+    'goddammit': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: true, sub: 'dangit' },
+    'hell': { lists: [], matchMethod: Constants.MatchMethods.Exact, repeat: false, separators: false, sub: 'heck' },
+    'jackass': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: true, sub: 'jerk' },
+    'nigga': { lists: [], matchMethod: Constants.MatchMethods.Exact, repeat: true, separators: false, sub: 'bruh' },
+    'nigger': { lists: [], matchMethod: Constants.MatchMethods.Exact, repeat: true, separators: false, sub: 'man' },
+    'niggers': { lists: [], matchMethod: Constants.MatchMethods.Exact, repeat: true, separators: false, sub: 'people' },
+    'piss': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: false, sub: 'pee' },
+    'pissed': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: false, sub: 'ticked' },
+    'pussies': { lists: [], matchMethod: Constants.MatchMethods.Exact, repeat: true, separators: false, sub: 'softies' },
+    'pussy': { lists: [], matchMethod: Constants.MatchMethods.Exact, repeat: true, separators: false, sub: 'softie' },
+    'shit': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: false, sub: 'crap' },
+    'slut': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: false, sub: 'tramp' },
+    'tits': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: false, sub: 'chest' },
+    'twat': { lists: [], matchMethod: Constants.MatchMethods.Exact, repeat: true, separators: false, sub: 'dumbo' },
+    'twats': { lists: [], matchMethod: Constants.MatchMethods.Exact, repeat: true, separators: false, sub: 'dumbos' },
+    'whore': { lists: [], matchMethod: Constants.MatchMethods.Partial, repeat: true, separators: false, sub: 'tramp' },
   };
 
-  static readonly _filterMethodNames = ['Censor', 'Substitute', 'Remove'];
-  static readonly _matchMethodNames = ['Exact', 'Partial', 'Whole', 'Per-Word', 'Regular-Expression'];
-  static readonly _maxBytes = 6500;
-  static readonly _maxWords = 100;
-  static readonly _wordsPattern = /^_words\d+/;
-
-  constructor(config) {
-    if (typeof config === 'undefined') {
-      throw new Error('Cannot be called directly. call build()');
-    }
-    for(let k in config) this[k]=config[k];
+  constructor(data: Record<string, unknown> = {}) {
+    Object.assign(this, Config._defaults, data);
   }
 
-  addWord(str: string, options?: WordOptions) {
-    str = str.trim().toLowerCase();
+  addWord(str: string, options: WordOptions = this.defaultWordOptions()) {
+    str = str.trim();
+    options = Object.assign({}, this.defaultWordOptions(), options);
+
+    if (options.matchMethod !== Constants.MatchMethods.Regex) {
+      str = str.toLowerCase();
+    }
+
     if (Object.keys(this.words).includes(str)) {
       return false; // Already exists
-    } else if (options) {
+    } else {
       options.sub = options.sub.trim().toLowerCase();
       this.words[str] = options;
       return true;
-    } else {
-      this.words[str] = {matchMethod: this.defaultWordMatchMethod, repeat: this.defaultWordRepeat, sub: ''};
-      return true;
     }
   }
 
+  defaultWordOptions(): WordOptions {
+    return {
+      lists: [],
+      matchMethod: this.defaultWordMatchMethod,
+      repeat: this.defaultWordRepeat,
+      separators: this.defaultWordSeparators,
+      sub: '',
+    };
+  }
+
   removeWord(str: string) {
-    str = str.trim().toLowerCase();
-    if (Object.keys(this.words).includes(str)) {
+    str = str.trim();
+    const lower = str.toLowerCase();
+
+    if (Object.keys(this.words).includes(lower)) {
+      delete this.words[lower];
+      return true;
+    } else if (this.words[str]) {
       delete this.words[str];
       return true;
     } else {
@@ -152,7 +135,7 @@ export default class Config {
   }
 
   sanitizeWords() {
-    let sanitizedWords = {};
+    const sanitizedWords = {};
     Object.keys(this.words).sort().forEach((key) => {
       sanitizedWords[key.trim().toLowerCase()] = this.words[key];
     });

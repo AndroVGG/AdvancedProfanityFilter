@@ -1,11 +1,11 @@
-const expect = require('chai').expect;
+import { expect } from 'chai';
 import Page from './built/page';
 
 describe('Page', function() {
   describe('isForbiddenNode()', function() {
     it('should return true when node is editable', function() {
       expect(Page.isForbiddenNode({ isContentEditable: true })).to.equal(true);
-      expect(Page.isForbiddenNode({ parentNode: { isContentEditable: true }})).to.equal(true);
+      expect(Page.isForbiddenNode({ parentNode: { isContentEditable: true } })).to.equal(true);
     });
 
     it('should return false when node is not editable', function() {

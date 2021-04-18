@@ -1,30 +1,44 @@
+/* eslint-disable no-console, @typescript-eslint/no-var-requires */
 'use strict';
 const fse = require('fs-extra');
 const path = require('path');
 const AdmZip = require('adm-zip');
 
 function buildAll() {
-  buildChrome(prepareZip());
-  buildEdge(getManifestJSON(), prepareZip());
+  build(prepareZip());
+  buildEdgeLegacy(getManifestJSON(), prepareZip());
   buildFirefox(getManifestJSON(), prepareZip());
-  buildOpera(prepareZip());
+  buildBookmarklet();
 }
 
-function buildChrome(zip) {
-  console.log('Building ./extension-chrome.zip');
-  fse.removeSync('./extension-chrome.zip');
-  zip.writeZip('./extension-chrome.zip');
+function build(zip, name = '') {
+  if (name) { name = '-' + name; }
+  let packagePath = `./extension${name}.zip`;
+  console.log(`Building ${packagePath}`);
+  fse.removeSync(packagePath);
+  zip.writeZip(packagePath);
 }
 
-function buildEdge(manifest, zip) {
-  if (!fse.existsSync('./store/edge')) { return false; }
-  console.log('Building ./extension-edge.zip');
-  let msPreload = {
-    backgroundScript: "backgroundScriptsAPIBridge.js",
-    contentScript: "contentScriptsAPIBridge.js"
+function buildBookmarklet() {
+  fse.copyFileSync(path.join(dist, 'bookmarkletFilter.js'), './bookmarklet.js');
+}
+
+function buildEdgeLegacy(manifest, zip) {
+  let packagePath = './extension-edge-legacy.zip';
+  console.log(`Building ${packagePath}`);
+
+  if (!fse.existsSync('./store/edge')) {
+    console.log('Error! Missing Edge legacy polyfills.');
+    return false;
   }
 
+  let msPreload = {
+    backgroundScript: 'backgroundScriptsAPIBridge.js',
+    contentScript: 'contentScriptsAPIBridge.js'
+  };
+
   // Fix options_page
+  // eslint-disable-next-line @typescript-eslint/camelcase
   manifest.options_page = manifest.options_ui.page;
   delete manifest.options_ui;
 
@@ -33,31 +47,26 @@ function buildEdge(manifest, zip) {
   updateManifestFileInZip(zip, manifest);
   zip.addLocalFile('./store/edge/src/backgroundScriptsAPIBridge.js', null);
   zip.addLocalFile('./store/edge/src/contentScriptsAPIBridge.js', null);
-  fse.removeSync('./extension-edge.zip');
-  zip.writeZip('./extension-edge.zip');
+  fse.removeSync(packagePath);
+  zip.writeZip(packagePath);
 }
 
 function buildFirefox(manifest, zip) {
-  console.log('Building ./extension-firefox.zip');
+  let packagePath = './extension-firefox.zip';
+  console.log(`Building ${packagePath}`);
   let firefoxManifest = {
-    "applications": {
-      "gecko": {
-        "id": "{853d1586-e2ab-4387-a7fd-1f7f894d2651}"
+    applications: {
+      gecko: {
+        id: '{853d1586-e2ab-4387-a7fd-1f7f894d2651}'
       }
     }
   };
   manifest.applications = firefoxManifest.applications;
   updateManifestFileInZip(zip, manifest);
-  fse.removeSync('./extension-firefox.zip');
-  zip.writeZip('./extension-firefox.zip');
+  fse.removeSync(packagePath);
+  zip.writeZip(packagePath);
 
   packageSource(); // Required due to bundled code
-}
-
-function buildOpera(zip) {
-  console.log('Building ./extension-opera.zip');
-  fse.removeSync('./extension-opera.zip');
-  zip.writeZip('./extension-opera.zip');
 }
 
 function getManifestJSON() {
@@ -80,7 +89,7 @@ function packageSource() {
   sourceZip.addLocalFolder('./bin', 'bin');
   sourceZip.addLocalFolder('./src', 'src');
   sourceZip.addLocalFolder('./test', 'test');
-  files.forEach(file => { sourceZip.addLocalFile(path.join('./', file), null)});
+  files.forEach(file => { sourceZip.addLocalFile(path.join('./', file), null); });
   sourceZip.writeZip('./extension-source.zip');
 }
 
@@ -100,17 +109,45 @@ function updateManifestFileInZip(zip, obj) {
   zip.updateFile('manifest.json', Buffer.alloc(content.length, content));
 }
 
-function updateManifestVersion(manifestPath, manifest) {
-  if (manifest.version != process.env.npm_package_version) {
-    console.log('Version number is being updated: ' + manifest.version + ' -> ' + process.env.npm_package_version)
-    manifest.version = process.env.npm_package_version || manifest.version;
-    updateManifestFile(manifestPath, manifest);
-    fse.copyFileSync(manifestPath, path.join(dist, 'manifest.json'));
+function updateManifestVersion(manifest, newVersion) {
+  console.log('Updating manifest.json version...');
+  manifest.version = newVersion;
+  updateManifestFile(manifestPath, manifest);
+  fse.copyFileSync(manifestPath, path.join(dist, 'manifest.json'));
+}
+
+function updateOptionPageVersion(newVersion) {
+  let filename = 'optionPage.html';
+  let optionPage = path.join(staticDir, filename);
+  let optionPageHTML = fse.readFileSync(optionPage).toString();
+  let foundMatch = false;
+
+  let newOptionPageHTML = optionPageHTML.replace(/id="helpVersion">.*?<\/a>/, function(match) {
+    foundMatch = true;
+    return `id="helpVersion">${newVersion}</a>`;
+  });
+
+  if (foundMatch) {
+    console.log(`Updating ${filename} version...`);
+    fse.writeFileSync(optionPage, newOptionPageHTML); // Update src version
+    fse.copyFileSync(optionPage, path.join(dist, filename)); // Copy src to dist
+  } else {
+    throw `Failed to update ${optionPage}`;
   }
 }
 
-const dist = './dist/'
-const staticDir = './src/static/'
+function updateVersions() {
+  let manifest = getManifestJSON();
+  if (manifest.version != process.env.npm_package_version) {
+    let newVersion = process.env.npm_package_version;
+    console.log('Version number is being updated: ' + manifest.version + ' -> ' + newVersion);
+    updateManifestVersion(manifest, newVersion);
+    updateOptionPageVersion(newVersion);
+  }
+}
+
+const dist = './dist/';
+const staticDir = './src/static/';
 let manifestPath = path.join(staticDir, 'manifest.json');
-updateManifestVersion(manifestPath, getManifestJSON());
+updateVersions();
 buildAll();

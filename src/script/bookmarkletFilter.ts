@@ -1,204 +1,274 @@
+import Constants from './lib/constants';
 import Domain from './domain';
-import {Filter} from './lib/filter';
+import Filter from './lib/filter';
 import Page from './page';
 import WebAudio from './webAudio';
-import Config from './lib/config';
+import WebConfig from './webConfig';
+import Wordlist from './lib/wordlist';
 import './vendor/findAndReplaceDOMText';
 
 // NO-OP for chrome.* API
-var chrome = {} as any;
+const chrome = {} as any;
 chrome.runtime = {};
-chrome.runtime.sendMessage = function(obj){};
+chrome.runtime.sendMessage = (obj) => {};
 
 /* @preserve - Start User Config */
-var config = Config._defaults as any;
-config.words = Config._defaultWords;
+const config = WebConfig._defaults as any;
+config.words = WebConfig._defaultWords;
 /* @preserve - End User Config */
 
 export default class BookmarkletFilter extends Filter {
-  advanced: boolean;
   audio: WebAudio;
   audioOnly: boolean;
-  cfg: Config;
+  audioWordlistId: number;
+  cfg: WebConfig;
+  domain: Domain;
+  extension: boolean;
   hostname: string;
   iframe: Location;
+  location: Location | URL;
   mutePage: boolean;
-  summary: Summary;
-  youTubeMutePage: boolean;
+  observer: MutationObserver;
+  processMutationTarget: boolean;
+  processNode: (node: HTMLElement | Document | ShadowRoot, wordlistId: number, stats?: boolean) => void;
+  shadowObserver: MutationObserver;
 
   constructor() {
     super();
-    this.advanced = false;
+    this.extension = false;
+    this.audioWordlistId = 0;
     this.mutePage = false;
-    this.summary = {};
+    this.processMutationTarget = false;
   }
 
-  // Always use the top frame for page check
-  advancedPage(): boolean {
-    return Domain.domainMatch(this.hostname, this.cfg.advancedDomains);
-  }
-
-  advancedReplaceText(node) {
-    filter.wordRegExps.forEach((regExp) => {
-      // @ts-ignore - External library function
-      findAndReplaceDOMText(node, {preset: 'prose', find: regExp, replace: function(portion, match) {
-        return filter.replaceText(match[0]);
-      }});
-    });
+  advancedReplaceText(node, wordlistId: number, stats = true) {
+    if (node.parentNode || node === document) {
+      this.wordlists[wordlistId].regExps.forEach((regExp) => {
+        // @ts-ignore: External library function
+        findAndReplaceDOMText(node, { preset: 'prose', find: regExp, replace: (portion, match) => {
+          if (portion.index === 0) {
+            return this.replaceText(match[0], wordlistId, stats);
+          } else {
+            return '';
+          }
+        } });
+      });
+    } else {
+      this.cleanText(node, wordlistId, stats);
+    }
   }
 
   checkMutationForProfanity(mutation) {
-    mutation.addedNodes.forEach(node => {
+    mutation.addedNodes.forEach((node) => {
       if (!Page.isForbiddenNode(node)) {
-        if (filter.mutePage) {
-          filter.cleanAudio(node);
-        } else if (!filter.audioOnly) {
-          filter.cleanNodeText(node);
+        if (this.mutePage) {
+          this.cleanAudio(node);
+        } else if (!this.audioOnly) {
+          this.processNode(node, this.wordlistId);
         }
       }
     });
 
-    if (filter.mutePage && filter.audio.muted) {
-      mutation.removedNodes.forEach(node => {
-        let supported = filter.audio.supportedNode(node);
-        if (supported !== false || node == filter.audio.lastFilteredNode) {
-          filter.audio.unmute();
+    if (this.mutePage && this.audio.muted) {
+      mutation.removedNodes.forEach((node) => {
+        const supported = this.audio.supportedNode(node);
+        const rule = supported !== false ? this.audio.rules[supported] : this.audio.rules[0];
+        if (
+          supported !== false
+          || node == this.audio.lastFilteredNode
+          || node.contains(this.audio.lastFilteredNode)
+          || (
+            rule.simpleUnmute
+            && this.audio.lastFilteredText
+            && this.audio.lastFilteredText.includes(node.textContent)
+          )
+        ) {
+          this.audio.unmute(rule);
         }
       });
     }
 
-    // Only process mutation change if target is text
-    if (!filter.audioOnly && mutation.target && mutation.target.nodeName == '#text') {
-      filter.checkMutationTargetTextForProfanity(mutation);
+    if (mutation.target) {
+      if (mutation.target.nodeName === '#text') {
+        this.checkMutationTargetTextForProfanity(mutation);
+      } else if (this.processMutationTarget) {
+        this.processNode(mutation.target, this.wordlistId);
+      }
     }
   }
 
   checkMutationTargetTextForProfanity(mutation) {
     if (!Page.isForbiddenNode(mutation.target)) {
-      let result = this.replaceTextResult(mutation.target.data);
-      if (result.modified) {
-        mutation.target.data = result.filtered;
+      if (this.mutePage) {
+        const supported = this.audio.supportedNode(mutation.target);
+        const rule = supported !== false ? this.audio.rules[supported] : this.audio.rules[0];
+        if (supported !== false && rule.simpleUnmute) {
+          // Supported node. Check if a previously filtered node is being removed
+          if (
+            this.audio.muted
+            && mutation.oldValue
+            && this.audio.lastFilteredText
+            && this.audio.lastFilteredText.includes(mutation.oldValue)
+          ) {
+            this.audio.unmute(rule);
+          }
+          this.audio.clean(mutation.target, supported);
+        } else if (rule.simpleUnmute && this.audio.muted && !mutation.target.parentElement) {
+          // Check for removing a filtered subtitle (no parent)
+          if (this.audio.lastFilteredText && this.audio.lastFilteredText.includes(mutation.target.textContent)) {
+            this.audio.unmute(rule);
+          }
+        } else if (!this.audioOnly) { // Filter regular text
+          const result = this.replaceTextResult(mutation.target.data, this.wordlistId);
+          if (result.modified) { mutation.target.data = result.filtered; }
+        }
+      } else if (!this.audioOnly) { // Filter regular text
+        const result = this.replaceTextResult(mutation.target.data, this.wordlistId);
+        if (result.modified) { mutation.target.data = result.filtered; }
       }
     }
   }
 
   cleanAudio(node) {
-    if (filter.audio.youTube && filter.audio.youTubeAutoSubsPresent()) {
-      if (filter.audio.youTubeAutoSubsSupportedNode(node)) {
-        if (filter.audio.youTubeAutoSubsCurrentRow(node)) {
-          filter.audio.cleanYouTubeAutoSubs(node);
-        } else if (!filter.audioOnly) {
-          filter.cleanNodeText(node);
+    if (this.audio.youTube && this.audio.youTubeAutoSubsPresent()) {
+      if (this.audio.youTubeAutoSubsSupportedNode(node)) {
+        if (this.audio.youTubeAutoSubsCurrentRow(node)) {
+          this.audio.cleanYouTubeAutoSubs(node);
+        } else if (!this.audioOnly) {
+          this.processNode(node, this.wordlistId);
         }
-      } else if (!filter.audioOnly && !filter.audio.youTubeAutoSubsNodeIsSubtitleText(node)) {
-        filter.cleanNodeText(node);
+      } else if (!this.audioOnly && !this.audio.youTubeAutoSubsNodeIsSubtitleText(node)) {
+        this.processNode(node, this.wordlistId);
       }
     } else {
-      let supported = filter.audio.supportedNode(node);
+      const supported = this.audio.supportedNode(node);
       if (supported !== false) {
-        filter.audio.clean(node, supported);
-      } else if (!filter.audioOnly) {
-        filter.cleanNodeText(node);
+        this.audio.clean(node, supported);
+      } else if (!this.audioOnly) {
+        this.processNode(node, this.wordlistId);
       }
     }
   }
 
-  cleanNode(node, stats: boolean = true) {
+  cleanChildNode(node, wordlistId: number, stats: boolean = true) {
+    if (node.nodeName) {
+      if (node.textContent && node.textContent.trim() != '') {
+        const result = this.replaceTextResult(node.textContent, wordlistId, stats);
+        if (result.modified) {
+          node.textContent = result.filtered;
+        }
+      } else if (node.nodeName == 'IMG') {
+        if (node.alt != '') { node.alt = this.replaceText(node.alt, wordlistId, stats); }
+        if (node.title != '') { node.title = this.replaceText(node.title, wordlistId, stats); }
+      } else if (node.shadowRoot) {
+        this.filterShadowRoot(node.shadowRoot, wordlistId, stats);
+      }
+    }
+  }
+
+  cleanNode(node, wordlistId: number, stats: boolean = true) {
     if (Page.isForbiddenNode(node)) { return false; }
-
-    if (node.childElementCount > 0) { // Tree node
-      let treeWalker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-      while(treeWalker.nextNode()) {
-        if (treeWalker.currentNode.childNodes.length > 0) {
-          treeWalker.currentNode.childNodes.forEach(childNode => {
-            this.cleanNode(childNode, stats);
-          });
-        } else {
-          this.cleanNode(treeWalker.currentNode, stats);
-        }
+    if (node.shadowRoot) { this.filterShadowRoot(node.shadowRoot, wordlistId, stats); }
+    if (node.childNodes.length > 0) {
+      for (let i = 0; i < node.childNodes.length ; i++) {
+        this.cleanNode(node.childNodes[i], wordlistId, stats);
       }
-    } else { // Leaf node
-      if (node.nodeName) {
-        if (node.textContent && node.textContent.trim() != '') {
-          let result = this.replaceTextResult(node.textContent, stats);
-          if (result.modified) {
-            node.textContent = result.filtered;
-          }
-        } else if (node.nodeName == 'IMG') {
-          if (node.alt != '') { node.alt = this.replaceText(node.alt, stats); }
-          if (node.title != '') { node.title = this.replaceText(node.title, stats); }
-        } else if (node.shadowRoot != undefined) {
-          shadowObserver.observe(node.shadowRoot, observerConfig);
-        }
-      }
-    }
-  }
-
-  cleanNodeText(node) {
-    if (filter.advanced && node.parentNode || node == document) {
-      filter.advancedReplaceText(node);
     } else {
-      filter.cleanNode(node);
+      this.cleanChildNode(node, this.wordlistId, stats);
     }
   }
 
   cleanPage() {
-    this.cfg = new Config(config);
-    this.cfg.muteMethod = 1; // Bookmarklet: Force audio muteMethod = 1 (Volume)
+    this.cfg = new WebConfig(config);
+    this.domain = Domain.byHostname(this.hostname, this.cfg.domains);
+    this.cfg.muteMethod = Constants.MuteMethods.Video; // Bookmarklet: Force video volume mute method
 
-    // Exit if the topmost frame is a disabled domain
-    let message: Message = { disabled: this.disabledPage() };
+    // Use domain-specific settings
+    const message: Message = { disabled: (this.cfg.enabledDomainsOnly && !this.domain.enabled) || this.domain.disabled };
     if (message.disabled) {
       chrome.runtime.sendMessage(message);
       return false;
     }
-
-    // Check for advanced mode on current domain
-    this.advanced = this.advancedPage();
+    if (this.domain.wordlistId !== undefined) { this.wordlistId = this.domain.wordlistId; }
+    if (this.domain.audioWordlistId !== undefined) { this.audioWordlistId = this.domain.audioWordlistId; }
 
     // Detect if we should mute audio for the current page
     if (this.cfg.muteAudio) {
       this.audio = new WebAudio(this);
       this.mutePage = this.audio.supportedPage;
-      this.youTubeMutePage = this.audio.youTube;
+      if (this.mutePage) {
+        if (this.cfg.wordlistsEnabled && this.wordlistId != this.audio.wordlistId) {
+          this.wordlists[this.audio.wordlistId] = new Wordlist(this.cfg, this.audio.wordlistId);
+        }
+      }
     }
 
     // Remove profanity from the main document and watch for new nodes
     this.init();
-    if (!this.audioOnly) { this.cleanNodeText(document); }
-    observer.observe(document, observerConfig);
+    if (!this.audioOnly) { this.processNode(document, this.wordlistId); }
+    this.startObserving(document);
   }
 
-  // Always use the top frame for page check
-  disabledPage(): boolean {
-    if (this.cfg.enabledDomainsOnly) {
-      return !(Domain.domainMatch(this.hostname, this.cfg.enabledDomains));
+  cleanText(node, wordlistId: number, stats: boolean = true) {
+    if (Page.isForbiddenNode(node)) { return false; }
+    if (node.shadowRoot) { this.filterShadowRoot(node.shadowRoot, wordlistId, stats); }
+    if (node.childElementCount > 0) {
+      const treeWalker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+      while(treeWalker.nextNode()) {
+        if (treeWalker.currentNode.childNodes.length > 0) {
+          treeWalker.currentNode.childNodes.forEach((childNode) => {
+            this.cleanText(childNode, wordlistId, stats);
+          });
+        } else {
+          if (!Page.isForbiddenNode(treeWalker.currentNode)) {
+            this.cleanChildNode(treeWalker.currentNode, wordlistId, stats);
+          }
+        }
+      }
     } else {
-      return Domain.domainMatch(this.hostname, this.cfg.disabledDomains);
+      this.cleanChildNode(node, wordlistId, stats);
+    }
+  }
+
+  filterShadowRoot(shadowRoot: ShadowRoot, wordlistId: number, stats: boolean = true) {
+    this.shadowObserver.observe(shadowRoot, ObserverConfig);
+    this.processNode(shadowRoot, wordlistId, stats);
+  }
+
+  init(wordlistId: number | false = false) {
+    super.init(wordlistId);
+
+    if (this.domain.advanced) {
+      this.processNode = this.advancedReplaceText;
+    } else if (this.domain.deep) {
+      this.processMutationTarget = true;
+      this.processNode = this.cleanNode;
+    } else {
+      this.processNode = this.cleanText;
     }
   }
 
   processMutations(mutations) {
-    mutations.forEach(function(mutation) {
+    mutations.forEach((mutation) => {
       filter.checkMutationForProfanity(mutation);
     });
   }
 
-  replaceTextResult(string: string, stats: boolean = true) {
-    let result = {} as any;
-    result.original = string;
-    result.filtered = filter.replaceText(string, stats);
-    result.modified = (result.filtered != string);
-    return result;
+  startObserving(target: Node = document, observer: MutationObserver = this.observer) {
+    observer.observe(target, ObserverConfig);
+  }
+
+  stopObserving(observer: MutationObserver = this.observer) {
+    const mutations = observer.takeRecords();
+    observer.disconnect();
+    if (mutations) { this.processMutations(mutations); }
   }
 
   updateCounterBadge() {} // NO-OP
 }
 
-let filter = new BookmarkletFilter;
-let observer;
-let shadowObserver;
-let observerConfig = {
+const filter = new BookmarkletFilter;
+const ObserverConfig: MutationObserverInit = {
   characterData: true,
   characterDataOldValue: true,
   childList: true,
@@ -206,8 +276,8 @@ let observerConfig = {
 };
 
 if (typeof window !== 'undefined') {
-  observer = new MutationObserver(filter.processMutations);
-  shadowObserver = new MutationObserver(filter.processMutations);
+  filter.observer = new MutationObserver(filter.processMutations);
+  filter.shadowObserver = new MutationObserver(filter.processMutations);
 
   if (window != window.top) {
     filter.iframe = document.location;

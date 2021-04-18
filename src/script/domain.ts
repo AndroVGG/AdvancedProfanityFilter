@@ -1,52 +1,120 @@
-import { removeFromArray } from './lib/helper';
+import Constants from './lib/constants';
+import WebConfig from './webConfig';
 
 export default class Domain {
-  tab: any;
-  url: URL;
-  hostname: string;
+  advanced: boolean;
+  audioWordlistId: number;
+  cfg: DomainCfg;
+  cfgKey: string;
+  deep: boolean;
+  disabled: boolean;
+  enabled: boolean;
+  hostname?: string;
+  tab?: any;
+  wordlistId: number;
 
-  static domainMatch(domain: string, domains: string[]): boolean {
-    let result = false;
-
-    for (let x = 0; x < domains.length; x++) {
-      let domainRegex = new RegExp('(^|\.)' + domains[x], 'i');
-      if (domainRegex.test(domain)) {
-        result = true;
-        break;
-      }
-    }
-
-    return result;
+  static readonly _domainCfgDefaults: DomainCfg = {
+    adv: undefined,
+    audioList: undefined,
+    deep: undefined,
+    disabled: undefined,
+    enabled: undefined,
+    wordlist: undefined,
   }
 
-  // If a parent domain (example.com) is included, it will not match all subdomains.
-  // If a subdomain is included, it will match itself and the parent, if present.
-  static removeFromList(domain: string, domains: string[]): string[] {
-    let domainRegex;
-    let newDomainsList = domains;
+  static byHostname(hostname: string, domains: { [domain: string]: DomainCfg }): Domain {
+    const cfgKey = Domain.findDomainKey(hostname, domains) || hostname;
+    const domain = Domain.byKey(cfgKey, domains);
+    domain.hostname = hostname;
+    return domain;
+  }
 
-    for (let x = 0; x < domains.length; x++) {
-      domainRegex = new RegExp('(^|\.)' + domains[x], 'i');
-      if (domainRegex.test(domain)) {
-        newDomainsList = removeFromArray(newDomainsList, domains[x]);
-      }
-    }
+  static byKey(key: string, domains: { [domain: string]: DomainCfg }): Domain {
+    return new Domain(key, domains[key]);
+  }
 
-    return newDomainsList;
+  static findDomainKey(hostname: string, domains: { [domain: string]: DomainCfg }): string {
+    const sorted = Object.keys(domains).sort((a, b) => { return b.length - a.length; });
+    return sorted.find((key) => new RegExp(`(^|.)${key}$`).test(hostname));
   }
 
   static getCurrentTab() {
     /* istanbul ignore next */
-    return new Promise(function(resolve, reject) {
-      chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+    return new Promise((resolve, reject) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         resolve(tabs[0]);
       });
     });
   }
 
-  async load() {
-    this.tab = await Domain.getCurrentTab();
-    this.url = new URL(this.tab.url);
-    this.hostname = this.url.hostname;
+  static sortedKeys(domains: { [site: string]: DomainCfg }) {
+    return Object.keys(domains).sort((a, b) => {
+      const domainA = a.match(/\w*\.\w*$/)[0];
+      const domainB = b.match(/\w*\.\w*$/)[0];
+      return domainA < domainB ? -1 : domainA > domainB ? 1 : 0;
+    });
+  }
+
+  constructor(key: string, domainCfg?: DomainCfg) {
+    this.cfgKey = key;
+    this.cfg = {};
+    if (!domainCfg) {
+      Object.assign(this.cfg, Domain._domainCfgDefaults);
+    } else {
+      this.cfg = domainCfg;
+    }
+
+    this.updateFromCfg();
+  }
+
+  getModeIndex() {
+    if (this.advanced) {
+      return Constants.DomainModes.Advanced;
+    } else if (this.deep) {
+      return Constants.DomainModes.Deep;
+    } else {
+      return Constants.DomainModes.Normal;
+    }
+  }
+
+  // Updates the config from the domain and saves it
+  async save(cfg: WebConfig) {
+    if (cfg.domains) {
+      this.updateCfg();
+
+      if (JSON.stringify(this.cfg) === '{}') { // Nothing to save, so remove it
+        delete cfg.domains[this.cfgKey];
+      } else {
+        cfg.domains[this.cfgKey] = this.cfg;
+      }
+
+      return await cfg.save('domains');
+    }
+  }
+
+  updateCfg() {
+    this.cfg.adv = this.advanced === true ? true : undefined;
+    this.cfg.deep = this.deep === true ? true : undefined;
+    this.cfg.disabled = this.disabled === true ? true : undefined;
+    this.cfg.enabled = this.enabled === true ? true : undefined;
+    this.cfg.wordlist = this.wordlistId >= 0 ? this.wordlistId : undefined;
+    this.cfg.audioList = this.audioWordlistId >= 0 ? this.audioWordlistId : undefined;
+  }
+
+  updateFromCfg() {
+    this.advanced = this.cfg.adv;
+    this.deep = this.cfg.deep;
+    this.disabled = this.cfg.disabled;
+    this.enabled = this.cfg.enabled;
+    this.wordlistId = this.cfg.wordlist;
+    this.audioWordlistId = this.cfg.audioList;
+  }
+
+  updateFromModeIndex(index: number) {
+    switch(index) {
+      case Constants.DomainModes.Normal: this.advanced = false; this.deep = false; break;
+      case Constants.DomainModes.Advanced: this.advanced = true; this.deep = false; break;
+      case Constants.DomainModes.Deep: this.advanced = false; this.deep = true; break;
+    }
   }
 }

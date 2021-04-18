@@ -1,176 +1,220 @@
+import Constants from './lib/constants';
 import Domain from './domain';
-import {Filter} from './lib/filter';
+import Filter from './lib/filter';
 import Page from './page';
 import WebAudio from './webAudio';
 import WebConfig from './webConfig';
+import Wordlist from './lib/wordlist';
 import './vendor/findAndReplaceDOMText';
+import Logger from './lib/logger';
+const logger = new Logger();
 
 export default class WebFilter extends Filter {
-  advanced: boolean;
   audio: WebAudio;
   audioOnly: boolean;
+  audioWordlistId: number;
   cfg: WebConfig;
+  domain: Domain;
+  extension: boolean;
   hostname: string;
   iframe: Location;
+  location: Location | URL;
   mutePage: boolean;
+  observer: MutationObserver;
+  processMutationTarget: boolean;
+  processNode: (node: HTMLElement | Document | ShadowRoot, wordlistId: number, stats?: boolean) => void;
+  shadowObserver: MutationObserver;
   summary: Summary;
-  youTubeMutePage: boolean;
 
   constructor() {
     super();
-    this.advanced = false;
+    this.audioWordlistId = 0;
+    this.extension = true;
     this.mutePage = false;
+    this.processMutationTarget = false;
     this.summary = {};
   }
 
-  // Always use the top frame for page check
-  advancedPage(): boolean {
-    return Domain.domainMatch(this.hostname, this.cfg.advancedDomains);
-  }
-
-  advancedReplaceText(node) {
-    filter.wordRegExps.forEach((regExp) => {
-      // @ts-ignore - External library function
-      findAndReplaceDOMText(node, {preset: 'prose', find: regExp, replace: function(portion, match) {
-        // console.log('[APF] Advanced node match:', node.textContent); // Debug: Filter - Advanced match
-        return filter.replaceText(match[0]);
-      }});
-    });
+  advancedReplaceText(node, wordlistId: number, stats = true) {
+    if (node.parentNode || node === document) {
+      this.wordlists[wordlistId].regExps.forEach((regExp) => {
+        // @ts-ignore: External library function
+        findAndReplaceDOMText(node, { preset: 'prose', find: regExp, replace: (portion, match) => {
+          // logger.debug('[APF] Advanced match found', node.textContent);
+          if (portion.index === 0) { // Replace the whole match on the first portion and skip the rest
+            return this.replaceText(match[0], wordlistId, stats);
+          } else {
+            return '';
+          }
+        } });
+      });
+    } else {
+      // ?: Might want to add support for processNode()
+      this.cleanText(node, wordlistId, stats);
+    }
   }
 
   checkMutationForProfanity(mutation) {
-    // console.count('[APF] filter.checkMutationForProfanity() count'); // Benchmark: Filter
-    // console.log('[APF] Mutation observed:', mutation); // Debug: Filter - Mutation
-    mutation.addedNodes.forEach(node => {
+    // console.count('[APF] this.checkMutationForProfanity() count'); // Benchmark: Filter
+    // logger.debug('Mutation observed', mutation);
+    mutation.addedNodes.forEach((node) => {
       if (!Page.isForbiddenNode(node)) {
-        // console.log('[APF] Added node(s):', node); // Debug: Filter - Mutation addedNodes
-        if (filter.mutePage) {
-          filter.cleanAudio(node);
-        } else if (!filter.audioOnly) {
-          filter.cleanNodeText(node);
+        // logger.debug('[APF] Added node(s):', node);
+        if (this.mutePage) {
+          this.cleanAudio(node);
+        } else if (!this.audioOnly) {
+          this.processNode(node, this.wordlistId);
         }
       }
-      // else { console.log('[APF] Forbidden node:', node); } // Debug: Filter - Mutation addedNodes
+      // else { logger.debug('Forbidden node', node); }
     });
 
     // Check removed nodes to see if we should unmute
-    if (filter.mutePage && filter.audio.muted) {
-      mutation.removedNodes.forEach(node => {
-        let supported = filter.audio.supportedNode(node);
-        if (supported !== false || node == filter.audio.lastFilteredNode) {
-          filter.audio.unmute();
+    if (this.mutePage && this.audio.muted) {
+      mutation.removedNodes.forEach((node) => {
+        const supported = this.audio.supportedNode(node);
+        const rule = supported !== false ? this.audio.rules[supported] : this.audio.rules[0]; // Use the matched rule, or the first rule
+        if (
+          supported !== false
+          || node == this.audio.lastFilteredNode
+          || node.contains(this.audio.lastFilteredNode)
+          || (
+            rule.simpleUnmute
+            && this.audio.lastFilteredText
+            && this.audio.lastFilteredText.includes(node.textContent)
+          )
+        ) {
+          this.audio.unmute(rule);
         }
       });
     }
 
-    // Only process mutation change if target is text
-    if (!filter.audioOnly && mutation.target && mutation.target.nodeName == '#text') {
-      filter.checkMutationTargetTextForProfanity(mutation);
+    if (mutation.target) {
+      if (mutation.target.nodeName === '#text') {
+        this.checkMutationTargetTextForProfanity(mutation);
+      } else if (this.processMutationTarget) {
+        this.processNode(mutation.target, this.wordlistId);
+      }
     }
   }
 
   checkMutationTargetTextForProfanity(mutation) {
     // console.count('checkMutationTargetTextForProfanity'); // Benchmark: Filter
-    // console.log('[APF] Process mutation.target:', mutation.target, mutation.target.data); // Debug: Filter - Mutation text
+    // logger.debug('Process mutation.target', mutation.target, mutation.target.data);
     if (!Page.isForbiddenNode(mutation.target)) {
-      let result = this.replaceTextResult(mutation.target.data);
-      if (result.modified) {
-        // console.log('[APF] Text target changed:', result.original, result.filtered); // Debug: Filter - Mutation text
-        mutation.target.data = result.filtered;
+      if (this.mutePage) {
+        const supported = this.audio.supportedNode(mutation.target);
+        const rule = supported !== false ? this.audio.rules[supported] : this.audio.rules[0]; // Use the matched rule, or the first rule
+        if (supported !== false && rule.simpleUnmute) {
+          // Supported node. Check if a previously filtered node is being removed
+          if (
+            this.audio.muted
+            && mutation.oldValue
+            && this.audio.lastFilteredText
+            && this.audio.lastFilteredText.includes(mutation.oldValue)
+          ) {
+            this.audio.unmute(rule);
+          }
+          this.audio.clean(mutation.target, supported);
+        } else if (rule.simpleUnmute && this.audio.muted && !mutation.target.parentElement) {
+          // Check for removing a filtered subtitle (no parent)
+          if (this.audio.lastFilteredText && this.audio.lastFilteredText.includes(mutation.target.textContent)) {
+            this.audio.unmute(rule);
+          }
+        } else if (!this.audioOnly) { // Filter regular text
+          const result = this.replaceTextResult(mutation.target.data, this.wordlistId);
+          if (result.modified) { mutation.target.data = result.filtered; }
+        }
+      } else if (!this.audioOnly) { // Filter regular text
+        const result = this.replaceTextResult(mutation.target.data, this.wordlistId);
+        if (result.modified) { mutation.target.data = result.filtered; }
       }
     }
-    // else { console.log('[APF] Forbidden mutation.target node:', mutation.target); } // Debug: Filter - Mutation text
+    // else { logger.debug('Forbidden mutation.target node', mutation.target); }
   }
 
   cleanAudio(node) {
     // YouTube Auto subs
-    if (filter.audio.youTube && filter.audio.youTubeAutoSubsPresent()) {
-      if (filter.audio.youTubeAutoSubsSupportedNode(node)) {
-        if (filter.audio.youTubeAutoSubsCurrentRow(node)) {
-          // console.log('[APF] YouTube subtitle node:', node); // Debug: Audio
-          filter.audio.cleanYouTubeAutoSubs(node);
-        } else if (!filter.audioOnly) {
-          filter.cleanNodeText(node); // Clean the rest of the page
+    if (this.audio.youTube && this.audio.youTubeAutoSubsPresent()) {
+      if (this.audio.youTubeAutoSubsSupportedNode(node)) {
+        if (this.audio.youTubeAutoSubsCurrentRow(node)) {
+          // logger.debug('[Audio] YouTube subtitle node', node);
+          this.audio.cleanYouTubeAutoSubs(node);
+        } else if (!this.audioOnly) {
+          this.processNode(node, this.wordlistId); // Clean the rest of the page
         }
-      } else if (!filter.audioOnly && !filter.audio.youTubeAutoSubsNodeIsSubtitleText(node)) {
-        filter.cleanNodeText(node); // Clean the rest of the page
+      } else if (!this.audioOnly && !this.audio.youTubeAutoSubsNodeIsSubtitleText(node)) {
+        this.processNode(node, this.wordlistId); // Clean the rest of the page
       }
     } else { // Other audio muting
-      let supported = filter.audio.supportedNode(node);
+      const supported = this.audio.supportedNode(node);
       if (supported !== false) {
-        // console.log('[APF] Audio subtitle node:', node); // Debug: Audio
-        filter.audio.clean(node, supported);
-      } else if (!filter.audioOnly) {
-        filter.cleanNodeText(node); // Clean the rest of the page
+        // logger.debug('[Audio] Audio subtitle node', node);
+        this.audio.clean(node, supported);
+      } else if (!this.audioOnly) {
+        this.processNode(node, this.wordlistId); // Clean the rest of the page
       }
     }
   }
 
-  cleanNode(node, stats: boolean = true) {
+  cleanChildNode(node, wordlistId: number, stats: boolean = true) {
+    if (node.nodeName) {
+      if (node.textContent && node.textContent.trim() != '') {
+        const result = this.replaceTextResult(node.textContent, wordlistId, stats);
+        if (result.modified) {
+          // logger.debug(`Normal node text changed: '${result.original}' to '${result.filtered}'.`);
+          node.textContent = result.filtered;
+        }
+      } else if (node.nodeName == 'IMG') {
+        if (node.alt != '') { node.alt = this.replaceText(node.alt, wordlistId, stats); }
+        if (node.title != '') { node.title = this.replaceText(node.title, wordlistId, stats); }
+      } else if (node.shadowRoot) {
+        this.filterShadowRoot(node.shadowRoot, wordlistId, stats);
+      }
+    }
+    // else { logger.debug('Node without nodeName', node); }
+  }
+
+  cleanNode(node, wordlistId: number, stats: boolean = true) {
     if (Page.isForbiddenNode(node)) { return false; }
-
-    if (node.childElementCount > 0) { // Tree node
-      let treeWalker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-      while(treeWalker.nextNode()) {
-        if (treeWalker.currentNode.childNodes.length > 0) {
-          treeWalker.currentNode.childNodes.forEach(childNode => {
-            this.cleanNode(childNode, stats);
-          });
-        } else {
-          this.cleanNode(treeWalker.currentNode, stats);
-        }
+    if (node.shadowRoot) { this.filterShadowRoot(node.shadowRoot, wordlistId, stats); }
+    if (node.childNodes.length > 0) {
+      for (let i = 0; i < node.childNodes.length ; i++) {
+        this.cleanNode(node.childNodes[i], wordlistId, stats);
       }
-    } else { // Leaf node
-      if (node.nodeName) {
-        if (node.textContent && node.textContent.trim() != '') {
-          let result = this.replaceTextResult(node.textContent, stats);
-          if (result.modified) {
-            // console.log('[APF] Normal node changed:', result.original, result.filtered); // Debug: Filter - Mutation node filtered
-            node.textContent = result.filtered;
-          }
-        } else if (node.nodeName == 'IMG') {
-          if (node.alt != '') { node.alt = this.replaceText(node.alt, stats); }
-          if (node.title != '') { node.title = this.replaceText(node.title, stats); }
-        } else if (node.shadowRoot != undefined) {
-          shadowObserver.observe(node.shadowRoot, observerConfig);
-        }
-      }
-      // else { console.log('[APF] node without nodeName:', node); } // Debug: Filter
-    }
-  }
-
-  cleanNodeText(node) {
-    // console.log('[APF] New node to filter', node); // Debug: Filter
-    if (filter.advanced && node.parentNode || node == document) {
-      filter.advancedReplaceText(node);
     } else {
-      filter.cleanNode(node);
+      this.cleanChildNode(node, this.wordlistId, stats);
     }
   }
 
   async cleanPage() {
-    // @ts-ignore: Type WebConfig is not assignable to type Config
     this.cfg = await WebConfig.build();
-    // console.log('[APF] Config loaded', this.cfg); // Debug: General
+    this.domain = Domain.byHostname(this.hostname, this.cfg.domains);
+    logger.info('Config loaded', this.cfg);
 
-    // Exit if the topmost frame is a disabled domain
-    let message: Message = { disabled: this.disabledPage() };
+    const backgroundData: BackgroundData = await this.getBackgroundData();
+
+    // Use domain-specific settings
+    const message: Message = { disabled: backgroundData.disabledTab || (this.cfg.enabledDomainsOnly && !this.domain.enabled) || this.domain.disabled };
     if (message.disabled) {
-      // console.log(`[APF] Disabled page: ${this.hostname} - exiting`); // Debug: General
+      logger.info(`Disabled for page '${this.hostname}'.`);
       chrome.runtime.sendMessage(message);
       return false;
     }
-
-    // Check for advanced mode on current domain
-    this.advanced = this.advancedPage();
-    // if (this.advanced) { console.log(`[APF] Enabling advanced match mode on ${this.hostname}`); } // Debug: General
+    if (this.domain.wordlistId !== undefined) { this.wordlistId = this.domain.wordlistId; }
+    if (this.domain.audioWordlistId !== undefined) { this.audioWordlistId = this.domain.audioWordlistId; }
 
     // Detect if we should mute audio for the current page
     if (this.cfg.muteAudio) {
       this.audio = new WebAudio(this);
       this.mutePage = this.audio.supportedPage;
-      // if (this.mutePage) { console.log(`[APF] Enabling audio muting on ${this.hostname}`); } // Debug: Audio
-      this.youTubeMutePage = this.audio.youTube;
+      if (this.mutePage) {
+        logger.info(`[Audio] Enabling audio muting on ${this.hostname}.`);
+        // Prebuild audio wordlist
+        if (this.cfg.wordlistsEnabled && this.wordlistId != this.audio.wordlistId) {
+          this.wordlists[this.audio.wordlistId] = new Wordlist(this.cfg, this.audio.wordlistId);
+        }
+      }
     }
 
     // Disable if muteAudioOnly mode is active and this is not a suported page
@@ -179,7 +223,7 @@ export default class WebFilter extends Filter {
         this.audioOnly = true;
       } else {
         message.disabled = true;
-        // console.log('[APF] Non audio page in audio only mode - exiting'); // Debug: Audio
+        logger.info(`'${this.hostname}' is not an audio page and audio only mode is enabled. Exiting.`);
         chrome.runtime.sendMessage(message);
         return false;
       }
@@ -190,74 +234,117 @@ export default class WebFilter extends Filter {
 
     // Remove profanity from the main document and watch for new nodes
     this.init();
-    // console.log('[APF] Filter initialized.', this); // Debug: General
-    if (!this.audioOnly) { this.cleanNodeText(document); }
+    logger.infoTime('Filter initialized.', this);
+    if (!this.audioOnly) { this.processNode(document, this.wordlistId); }
+    logger.infoTime('Initial page filtered.');
     this.updateCounterBadge();
-    observer.observe(document, observerConfig);
+    this.startObserving(document);
   }
 
-  // Always use the top frame for page check
-  disabledPage(): boolean {
-    if (this.cfg.enabledDomainsOnly) {
-      return !(Domain.domainMatch(this.hostname, this.cfg.enabledDomains));
+  cleanText(node, wordlistId: number, stats: boolean = true) {
+    if (Page.isForbiddenNode(node)) { return false; }
+    if (node.shadowRoot) { this.filterShadowRoot(node.shadowRoot, wordlistId, stats); }
+    if (node.childElementCount > 0) {
+      const treeWalker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+      // Note: This while loop skips processing on first node
+      while(treeWalker.nextNode()) {
+        if (treeWalker.currentNode.childNodes.length > 0) {
+          treeWalker.currentNode.childNodes.forEach((childNode) => {
+            this.cleanText(childNode, wordlistId, stats);
+          });
+        } else {
+          if (!Page.isForbiddenNode(treeWalker.currentNode)) {
+            this.cleanChildNode(treeWalker.currentNode, wordlistId, stats);
+          }
+        }
+      }
     } else {
-      return Domain.domainMatch(this.hostname, this.cfg.disabledDomains);
+      this.cleanChildNode(node, wordlistId, stats);
     }
+  }
+
+  filterShadowRoot(shadowRoot: ShadowRoot, wordlistId: number, stats: boolean = true) {
+    this.shadowObserver.observe(shadowRoot, ObserverConfig);
+    this.processNode(shadowRoot, wordlistId, stats);
   }
 
   foundMatch(word) {
     super.foundMatch(word);
     if (this.cfg.showSummary) {
-      if (this.summary[word]) {
-        this.summary[word].count += 1;
+      if (this.summary[word.value]) {
+        this.summary[word.value].count += 1;
       } else {
         let result;
-        if (this.cfg.words[word].matchMethod == 4) { // Regexp
-          result = this.cfg.words[word].sub || this.cfg.defaultSubstitution;
+        if (word.matchMethod === Constants.MatchMethods.Regex) {
+          result = word.sub || this.cfg.defaultSubstitution;
         } else {
-          result = filter.replaceText(word, false);
+          result = this.replaceText(word.value, 0, false); // We can use 0 (All) here because we are just filtering a word
         }
 
-        this.summary[word] = { filtered: result, count: 1 };
+        this.summary[word.value] = { filtered: result, count: 1 };
       }
+    }
+  }
+
+  getBackgroundData() {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ backgroundData: true }, (response) => {
+        if (!response) { response = { disabledTab: false }; }
+        resolve(response);
+      });
+    });
+  }
+
+  init(wordlistId: number | false = false) {
+    super.init(wordlistId);
+
+    if (this.domain.advanced) {
+      this.processNode = this.advancedReplaceText;
+    } else if (this.domain.deep) {
+      this.processMutationTarget = true;
+      this.processNode = this.cleanNode;
+    } else {
+      this.processNode = this.cleanText;
     }
   }
 
   // Listen for data requests from Popup
   popupListener() {
     /* istanbul ignore next */
-    chrome.runtime.onMessage.addListener(function(request, sender, sendResponse){
-      if (filter.cfg.showSummary && request.popup && (filter.counter > 0 || filter.mutePage)) {
-        chrome.runtime.sendMessage({ mutePage: filter.mutePage, summary: filter.summary });
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      if (this.cfg.showSummary && request.popup && (this.counter > 0 || this.mutePage)) {
+        chrome.runtime.sendMessage({ mutePage: this.mutePage, summary: this.summary });
       }
     });
   }
 
   processMutations(mutations) {
-    mutations.forEach(function(mutation) {
+    mutations.forEach((mutation) => {
       filter.checkMutationForProfanity(mutation);
     });
     filter.updateCounterBadge();
   }
 
-  replaceTextResult(string: string, stats: boolean = true) {
-    let result = {} as any;
-    result.original = string;
-    result.filtered = filter.replaceText(string, stats);
-    result.modified = (result.filtered != string);
-    return result;
-  }
-
   sendInitState(message: Message) {
     // Reset muted state on page load if we muted the tab audio
-    if (this.cfg.muteAudio && this.cfg.muteMethod == 0) { message.clearMute = true; }
+    if (this.cfg.muteAudio && this.cfg.muteMethod == Constants.MuteMethods.Tab) { message.clearMute = true; }
 
     // Send page state to color icon badge
-    message.setBadgeColor = true;
-    message.advanced = this.advanced;
+    if (!this.iframe) { message.setBadgeColor = true; }
+    message.advanced = this.domain.advanced;
     message.mutePage = this.mutePage;
     if (this.mutePage && this.cfg.showCounter) { message.counter = this.counter; } // Always show counter when muting audio
     chrome.runtime.sendMessage(message);
+  }
+
+  startObserving(target: Node = document, observer: MutationObserver = this.observer) {
+    observer.observe(target, ObserverConfig);
+  }
+
+  stopObserving(observer: MutationObserver = this.observer) {
+    const mutations = observer.takeRecords();
+    observer.disconnect();
+    if (mutations) { this.processMutations(mutations); }
   }
 
   updateCounterBadge() {
@@ -268,17 +355,16 @@ export default class WebFilter extends Filter {
         if (this.cfg.showCounter) chrome.runtime.sendMessage({ counter: this.counter });
         if (this.cfg.showSummary) chrome.runtime.sendMessage({ summary: this.summary });
       } catch (e) {
-        // console.log('Failed to sendMessage', e); // Error - Extension context invalidated.
+        if (e.message !== 'Extension context invalidated.') {
+          logger.warn('Failed to sendMessage', e);
+        }
       }
     }
   }
 }
 
-// Global
-let filter = new WebFilter;
-let observer;
-let shadowObserver;
-let observerConfig: MutationObserverInit = {
+const filter = new WebFilter;
+const ObserverConfig: MutationObserverInit = {
   characterData: true,
   characterDataOldValue: true,
   childList: true,
@@ -286,8 +372,8 @@ let observerConfig: MutationObserverInit = {
 };
 
 if (typeof window !== 'undefined' && ['[object Window]', '[object ContentScriptGlobalScope]'].includes(({}).toString.call(window))) {
-  observer = new MutationObserver(filter.processMutations);
-  shadowObserver = new MutationObserver(filter.processMutations);
+  filter.observer = new MutationObserver(filter.processMutations);
+  filter.shadowObserver = new MutationObserver(filter.processMutations);
 
   // The hostname should resolve to the browser window's URI (or the parent of an IFRAME) for disabled/advanced page checks
   if (window != window.top) {

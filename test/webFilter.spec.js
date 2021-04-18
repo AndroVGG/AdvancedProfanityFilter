@@ -1,34 +1,34 @@
-const expect = require('chai').expect;
-// import * as bundle from '../built/filter.bundle';
+import { expect } from 'chai';
+import Domain from './built/domain';
 import WebConfig from './built/webConfig';
 import WebFilter from './built/webFilter';
 
 describe('WebFilter', function() {
-  describe('disabledPage()', function() {
-    let filter = new WebFilter;
-    filter.cfg = new WebConfig({ disabledDomains: ['example.com', 'sub.sample.com'] });
+  describe('domains', function() {
+    const filter = new WebFilter;
+    filter.cfg = new WebConfig({
+      domains: {
+        'example.com': { disabled: true },
+        'sub.sample.com': { adv: true },
+      }
+    });
 
     // Setup mock window/document
-    let location = { hostname: 'example.com' };
+    const location = { hostname: 'example.com' };
     global.window = { parent: { location: location }, location: location };
     global.document = { location: location, referrer: 'sample.com' };
     filter.getTestHostname = () => (window.location == window.parent.location) ? document.location.hostname : new URL(document.referrer).hostname;
     filter.hostname = filter.getTestHostname();
 
-    it('should return true when on a disabled domain', function() {
-      expect(filter.disabledPage()).to.equal(true);
+    it('should be disabled when parent domain is disabled', function() {
+      filter.domain = Domain.byHostname('www.example.com', filter.cfg.domains);
+      expect(filter.domain.disabled).to.be.true;
     });
 
-    it('should return false when not on a disabled domain', function() {
-      location.hostname = 'sample.com';
-      filter.hostname = filter.getTestHostname();
-      expect(filter.disabledPage()).to.equal(false);
-    });
-
-    it('should return true when on a subdomain of a disabled parent domain', function() {
-      location.hostname = 'sub.example.com';
-      filter.hostname = filter.getTestHostname();
-      expect(filter.disabledPage()).to.equal(true);
+    it('should not be disabled and be advanced', function() {
+      filter.domain = Domain.byHostname('sub.sample.com', filter.cfg.domains);
+      expect(filter.domain.disabled).to.be.undefined;
+      expect(filter.domain.advanced).to.be.true;
     });
   });
 });

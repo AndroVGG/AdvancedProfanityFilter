@@ -1,26 +1,70 @@
-import WebConfig from './webConfig';
-import Domain from './domain';
 import DataMigration from './dataMigration';
+import Domain from './domain';
+import WebConfig from './webConfig';
+import { formatNumber } from './lib/helper';
+import Logger from './lib/logger';
+const logger = new Logger();
+
+const BackgroundStorage: BackgroundStorage = {
+  tabs: {},
+};
 
 ////
-// Actions and messaging
+// Functions
+//
+function contextMenusOnClick(info: chrome.contextMenus.OnClickData, tab: chrome.tabs.Tab) {
+  switch(info.menuItemId) {
+    case 'addSelection':
+      processSelection('addWord', info.selectionText); break;
+    case 'disableTabOnce':
+      disableTabOnce(tab.id); break;
+    case 'options':
+      chrome.runtime.openOptionsPage(); break;
+    case 'removeSelection':
+      processSelection('removeWord', info.selectionText); break;
+    case 'toggleAdvancedForDomain':
+      toggleDomain((new URL(tab.url)).hostname, 'advanced'); break;
+    case 'toggleForDomain':
+      toggleDomain((new URL(tab.url)).hostname, 'disable'); break;
+    case 'toggleTabDisable':
+      toggleTabDisable(tab.id); break;
+  }
+}
+
+function disableTabOnce(id: number): void {
+  saveTabOptions(id, { disabledOnce: true });
+  chrome.tabs.reload();
+}
+
+function getTabOptions(id: number): TabStorageOptions {
+  return storedTab(id) ? BackgroundStorage.tabs[id] : saveNewTabOptions(id);
+}
+
+function notificationsOnClick(notificationId: string) {
+  switch(notificationId) {
+    case 'extensionUpdate':
+      chrome.notifications.clear('extensionUpdate');
+      chrome.tabs.create({ url: 'https://github.com/richardfrost/AdvancedProfanityFilter/releases' });
+      break;
+  }
+}
 
 // Actions for extension install or upgrade
-chrome.runtime.onInstalled.addListener(function(details){
+function onInstalled(details: chrome.runtime.InstalledDetails) {
   if (details.reason == 'install') {
     chrome.runtime.openOptionsPage();
   } else if (details.reason == 'update') {
-    // var thisVersion = chrome.runtime.getManifest().version;
-    // console.log('Updated from ' + details.previousVersion + ' to ' + thisVersion);
+    const thisVersion = chrome.runtime.getManifest().version;
+    logger.info(`Updated from ${details.previousVersion} to ${thisVersion}`);
 
     // Open options page to show new features
     // chrome.runtime.openOptionsPage();
 
     // Run any data migrations on update
-    updateMigrations(details.previousVersion);
+    runUpdateMigrations(details.previousVersion);
 
     // Display update notification
-    chrome.storage.sync.get({showUpdateNotification: true}, function(data) {
+    chrome.storage.sync.get({ showUpdateNotification: true }, (data) => {
       if (data.showUpdateNotification) {
         chrome.notifications.create('extensionUpdate', {
           'type': 'basic',
@@ -32,99 +76,133 @@ chrome.runtime.onInstalled.addListener(function(details){
       }
     });
   }
-});
+}
 
-chrome.runtime.onMessage.addListener(
-  function(request: Message, sender, sendResponse) {
-    if (request.disabled === true) {
-      chrome.browserAction.setIcon({ path: 'img/icon19-disabled.png', tabId: sender.tab.id });
-    } else {
-      // Set badge color
-      // chrome.browserAction.setBadgeBackgroundColor({ color: [138, 43, 226, 255], tabId: sender.tab.id }); // Blue Violet
-      // chrome.browserAction.setBadgeBackgroundColor({ color: [85, 85, 85, 255], tabId: sender.tab.id }); // Grey (Default)
-      // chrome.browserAction.setBadgeBackgroundColor({ color: [236, 147, 41, 255], tabId: sender.tab.id }); // Orange
-      if (request.setBadgeColor) {
-        if (request.mutePage) {
-          chrome.browserAction.setBadgeBackgroundColor({ color: [34, 139, 34, 255], tabId: sender.tab.id }); // Forest Green - Audio
-        } else if (request.advanced) {
-          chrome.browserAction.setBadgeBackgroundColor({ color: [211, 45, 39, 255], tabId: sender.tab.id }); // Red - Advanced
-        } else {
-          chrome.browserAction.setBadgeBackgroundColor({ color: [66, 133, 244, 255], tabId: sender.tab.id }); // Blue - Normal
-        }
+function onMessage(request: Message, sender, sendResponse) {
+  if (request.disabled === true) {
+    chrome.browserAction.setIcon({ path: 'img/icon19-disabled.png', tabId: sender.tab.id });
+  } else if (request.backgroundData === true) {
+    const response: BackgroundData = { disabledTab: false };
+    const tabOptions = getTabOptions(sender.tab.id);
+    if (tabOptions.disabled || tabOptions.disabledOnce) {
+      response.disabledTab = true;
+      if (tabOptions.disabledOnce) { tabOptions.disabledOnce = false; }
+    }
+    sendResponse(response);
+  } else {
+    // Set badge color
+    // chrome.browserAction.setBadgeBackgroundColor({ color: [138, 43, 226, 255], tabId: sender.tab.id }); // Blue Violet
+    // chrome.browserAction.setBadgeBackgroundColor({ color: [85, 85, 85, 255], tabId: sender.tab.id }); // Grey (Default)
+    // chrome.browserAction.setBadgeBackgroundColor({ color: [236, 147, 41, 255], tabId: sender.tab.id }); // Orange
+    if (request.setBadgeColor) {
+      if (request.mutePage) {
+        chrome.browserAction.setBadgeBackgroundColor({ color: [34, 139, 34, 255], tabId: sender.tab.id }); // Forest Green - Audio
+      } else if (request.advanced) {
+        chrome.browserAction.setBadgeBackgroundColor({ color: [211, 45, 39, 255], tabId: sender.tab.id }); // Red - Advanced
+      } else {
+        chrome.browserAction.setBadgeBackgroundColor({ color: [66, 133, 244, 255], tabId: sender.tab.id }); // Blue - Normal
       }
+    }
 
-      // Show count of words filtered on badge
-      if (request.counter != undefined) {
-        chrome.browserAction.setBadgeText({ text: request.counter.toString(), tabId: sender.tab.id });
-      }
+    // Show count of words filtered on badge
+    if (request.counter != undefined) {
+      chrome.browserAction.setBadgeText({ text: formatNumber(request.counter), tabId: sender.tab.id });
+    }
 
-      // Set mute state for tab
-      if (request.mute != undefined) {
-        chrome.tabs.update(sender.tab.id, { muted: request.mute });
-      }
+    // Set mute state for tab
+    if (request.mute != undefined) {
+      chrome.tabs.update(sender.tab.id, { muted: request.mute });
+    }
 
-      // Unmute on page reload
-      if (request.clearMute === true && sender.tab != undefined) {
-        let {muted, reason, extensionId} = sender.tab.mutedInfo;
-        if (muted && reason == 'extension' && extensionId == chrome.runtime.id) {
-          chrome.tabs.update(sender.tab.id, { muted: false });
-        }
+    // Unmute on page reload
+    if (request.clearMute === true && sender.tab != undefined) {
+      const { muted, reason, extensionId } = sender.tab.mutedInfo;
+      if (muted && reason == 'extension' && extensionId == chrome.runtime.id) {
+        chrome.tabs.update(sender.tab.id, { muted: false });
       }
     }
   }
-);
+}
 
-////
-// Context menu
-//
 // Add selected word/phrase and reload page (unless already present)
 async function processSelection(action: string, selection: string) {
-  let cfg = await WebConfig.build(); // TODO: Only need words here
-  let result = cfg[action](selection);
+  const cfg = await WebConfig.build('words');
+  const result = cfg[action](selection);
 
   if (result) {
-    let saved = await cfg.save();
-    if (!saved) { chrome.tabs.reload(); }
+    try {
+      await cfg.save();
+      chrome.tabs.reload();
+    } catch(e) {
+      logger.errorTime(`Failed to process selection '${selection}'.`, e);
+    }
   }
 }
 
-// Disable domain and reload page (unless already disabled)
-async function disableDomain(cfg: WebConfig, domain: string, key: string) {
-  if (!cfg[key].includes(domain)) {
-    cfg[key].push(domain);
-    let result = await cfg.save();
-    if (!result) { chrome.tabs.reload(); }
-  }
-}
-
-// Remove all entries that disable the filter for domain
-async function enableDomain(cfg: WebConfig, domain: string, key: string) {
-  let newDomainList = Domain.removeFromList(domain, cfg[key]);
-
-  if (newDomainList.length < cfg[key].length) {
-    cfg[key] = newDomainList;
-    let result = await cfg.save();
-    if (!result) { chrome.tabs.reload(); }
-  }
-}
-
-async function toggleDomain(domain: string, key: string) {
-  let cfg = await WebConfig.build([key]);
-  Domain.domainMatch(domain, cfg[key]) ? enableDomain(cfg, domain, key) : disableDomain(cfg, domain, key);
-}
-
-async function updateMigrations(previousVersion) {
+async function runUpdateMigrations(previousVersion) {
   if (DataMigration.migrationNeeded(previousVersion)) {
-    let cfg = await WebConfig.build();
-    let migration = new DataMigration(cfg);
-    let migrated = migration.byVersion(previousVersion);
+    const cfg = await WebConfig.build();
+    const migration = new DataMigration(cfg);
+    const migrated = migration.byVersion(previousVersion);
     if (migrated) cfg.save();
   }
 }
 
+function saveNewTabOptions(id: number, options: TabStorageOptions = {}): TabStorageOptions {
+  const _defaults: TabStorageOptions = { disabled: false, disabledOnce: false };
+  const tabOptions = Object.assign({}, _defaults, options) as TabStorageOptions;
+  tabOptions.id = id;
+  tabOptions.registeredAt = new Date().getTime();
+  BackgroundStorage.tabs[id] = tabOptions;
+  return tabOptions;
+}
+
+function saveTabOptions(id: number, options: TabStorageOptions = {}): TabStorageOptions {
+  return storedTab(id) ? Object.assign(getTabOptions(id), options) : saveNewTabOptions(id, options);
+}
+
+function storedTab(id: number): boolean {
+  return BackgroundStorage.tabs.hasOwnProperty(id);
+}
+
+function tabsOnActivated(tab: chrome.tabs.TabActiveInfo) {
+  const tabId = tab ? tab.tabId : chrome.tabs.TAB_ID_NONE;
+  if (!storedTab(tabId)) { saveTabOptions(tabId); }
+}
+
+function tabsOnRemoved(tabId: number) {
+  if (storedTab(tabId)) { delete BackgroundStorage.tabs[tabId]; }
+}
+
+async function toggleDomain(hostname: string, action: string) {
+  const cfg = await WebConfig.build(['domains', 'enabledDomainsOnly']);
+  const domain = Domain.byHostname(hostname, cfg.domains);
+
+  switch(action) {
+    case 'disable':
+      cfg.enabledDomainsOnly ? domain.enabled = !domain.enabled : domain.disabled = !domain.disabled; break;
+    case 'advanced':
+      domain.advanced = !domain.advanced; break;
+  }
+
+  try {
+    await domain.save(cfg);
+    chrome.tabs.reload();
+  } catch(e) {
+    logger.error(`Failed to modify '${action}' for domain '${domain.cfgKey}'.`, e, domain);
+  }
+}
+
+function toggleTabDisable(id: number) {
+  const tabOptions = getTabOptions(id);
+  tabOptions.disabled = !tabOptions.disabled;
+  chrome.tabs.reload();
+}
+
 ////
-// Menu Items
-chrome.contextMenus.removeAll(function() {
+// Context menu
+//
+chrome.contextMenus.removeAll(() => {
   chrome.contextMenus.create({
     id: 'addSelection',
     title: 'Add selection to filter',
@@ -140,15 +218,29 @@ chrome.contextMenus.removeAll(function() {
   });
 
   chrome.contextMenus.create({
-    id: 'toggleFilterForDomain',
-    title: 'Toggle filter for domain',
+    id: 'disableTabOnce',
+    title: 'Disable once',
     contexts: ['all'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
 
   chrome.contextMenus.create({
-    id: 'toggleAdvancedModeForDomain',
-    title: 'Toggle advanced mode for domain',
+    id: 'toggleTabDisable',
+    title: 'Toggle for tab',
+    contexts: ['all'],
+    documentUrlPatterns: ['http://*/*', 'https://*/*']
+  });
+
+  chrome.contextMenus.create({
+    id: 'toggleForDomain',
+    title: 'Toggle for domain',
+    contexts: ['all'],
+    documentUrlPatterns: ['http://*/*', 'https://*/*']
+  });
+
+  chrome.contextMenus.create({
+    id: 'toggleAdvancedForDomain',
+    title: 'Toggle advanced for domain',
     contexts: ['all'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
@@ -162,30 +254,10 @@ chrome.contextMenus.removeAll(function() {
 
 ////
 // Listeners
-chrome.contextMenus.onClicked.addListener(function(info, tab) {
-  switch(info.menuItemId) {
-    case 'addSelection':
-      processSelection('addWord', info.selectionText); break;
-    case 'removeSelection':
-      processSelection('removeWord', info.selectionText); break;
-    case 'toggleFilterForDomain': {
-      let url = new URL(tab.url);
-      toggleDomain(url.hostname, 'disabledDomains'); break;
-    }
-    case 'toggleAdvancedModeForDomain': {
-      let url = new URL(tab.url);
-      toggleDomain(url.hostname, 'advancedDomains'); break;
-    }
-    case 'options':
-      chrome.runtime.openOptionsPage(); break;
-  }
-});
-
-chrome.notifications.onClicked.addListener(function(notificationId) {
-  switch(notificationId) {
-    case 'extensionUpdate':
-      chrome.notifications.clear('extensionUpdate');
-      chrome.tabs.create({url: 'https://github.com/richardfrost/AdvancedProfanityFilter/releases'});
-      break;
-  }
-});
+//
+chrome.contextMenus.onClicked.addListener((info, tab) => { contextMenusOnClick(info, tab); });
+chrome.notifications.onClicked.addListener((notificationId) => { notificationsOnClick(notificationId); });
+chrome.runtime.onInstalled.addListener((details) => { onInstalled(details); });
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => { onMessage(request, sender, sendResponse); });
+chrome.tabs.onActivated.addListener((tab) => { tabsOnActivated(tab); });
+chrome.tabs.onRemoved.addListener((tabId) => { tabsOnRemoved(tabId); });
